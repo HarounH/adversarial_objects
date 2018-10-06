@@ -1,5 +1,6 @@
 examples/data/stop_sign/*
-
+output/*
+adversarial_objects/output
 .DS_Store
 # Byte-compiled / optimized / DLL files
 __pycache__/
