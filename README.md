@@ -1,6 +1,9 @@
 # [wip] Adversarial Objects
 We use the neural 3d mesh renderer to create adversarial objects.
 
+To do a basic draw:
+`python adversarial_objects/draw.py`
+Output is written to adversarial_objects/output/custom_stop_sign.png
 
 # Neural 3D Mesh Renderer (CVPR 2018)
 
