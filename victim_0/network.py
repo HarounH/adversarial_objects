@@ -64,16 +64,21 @@ class TrafficSignClassifier(nn.Module):
 
         self.conv = torch.nn.Sequential(
             torch.nn.Conv2d(3, 16, 2, stride=2, padding=1),
+            torch.nn.BatchNorm2d(16),
             # 16*16*16
             torch.nn.Conv2d(16, 32, 4, stride=2, padding=1),
+            torch.nn.BatchNorm2d(32),
             # 32*8*8
             torch.nn.Conv2d(32, 64, 4, stride=2, padding=1),
+            torch.nn.BatchNorm2d(64),
             # 64*4*4
             torch.nn.Conv2d(64, 128, 4, stride=2, padding=1),
+            torch.nn.BatchNorm2d(128),
             # 128*2*2
             )
         self.final = torch.nn.Sequential(
-            torch.nn.Linear(128*2*2, 43),
+            torch.nn.Linear(128*2*2, 128*2),
+            torch.nn.Linear(128*2, 43),
             # 1*1*1
         )
         
@@ -100,7 +105,7 @@ class Trainer():
         start_epoch = 0
         self.cuda_available=True
         self.model.train()
-        self.optimizer = optim.Adam(filter(lambda p: p.requires_grad,self.model.parameters()),lr=0.001)
+        self.optimizer = optim.Adam(filter(lambda p: p.requires_grad,self.model.parameters()),lr=0.0005)
         print("Starting training")
         for epoch in range(start_epoch, self.epochs):
             for i, (images, labels) in enumerate(self.train_loader):
@@ -189,7 +194,7 @@ def main():
                                                     sampler=valid_sampler)
 
     trainer = Trainer(train_loader,validation_loader)
-    #trainer.load(filepath)
+    trainer.load('working_model.chk')
     trainer.train()
 
 if __name__ == '__main__':
