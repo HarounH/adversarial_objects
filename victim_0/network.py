@@ -38,7 +38,7 @@ def get_victim(filepath):
     checkpoint = load_checkpoint(filepath)
     model = TrafficSignClassifier()
     model.load_state_dict(checkpoint['model'])
-    return model
+    return model.cuda()
 
 # Network
 class Classifier(nn.Module):
@@ -65,20 +65,25 @@ class TrafficSignClassifier(nn.Module):
         self.conv = torch.nn.Sequential(
             torch.nn.Conv2d(3, 16, 2, stride=2, padding=1),
             torch.nn.BatchNorm2d(16),
+            torch.nn.LeakyReLU(0.2),
             # 16*16*16
             torch.nn.Conv2d(16, 32, 4, stride=2, padding=1),
             torch.nn.BatchNorm2d(32),
+            torch.nn.LeakyReLU(0.2),
             # 32*8*8
             torch.nn.Conv2d(32, 64, 4, stride=2, padding=1),
             torch.nn.BatchNorm2d(64),
+            torch.nn.LeakyReLU(0.2),
             # 64*4*4
             torch.nn.Conv2d(64, 128, 4, stride=2, padding=1),
             torch.nn.BatchNorm2d(128),
+            torch.nn.LeakyReLU(0.2),
             # 128*2*2
             )
         self.final = torch.nn.Sequential(
             torch.nn.Linear(128*2*2, 128*2),
-            torch.nn.Linear(128*2, 43),
+            torch.nn.LeakyReLU(0.2),
+            torch.nn.Linear(128*2, 43,bias=False),
             # 1*1*1
         )
         
@@ -105,7 +110,7 @@ class Trainer():
         start_epoch = 0
         self.cuda_available=True
         self.model.train()
-        self.optimizer = optim.Adam(filter(lambda p: p.requires_grad,self.model.parameters()),lr=0.0005)
+        self.optimizer = optim.Adam(filter(lambda p: p.requires_grad,self.model.parameters()),lr=0.001)
         print("Starting training")
         for epoch in range(start_epoch, self.epochs):
             for i, (images, labels) in enumerate(self.train_loader):
@@ -129,15 +134,16 @@ class Trainer():
                                   len(self.train_loader),
                                   loss.item()))
 
-            train_acc, train_loss = self.validate_model(self.train_loader, self.model)
+            # train_acc, train_loss = self.validate_model(self.train_loader, self.model)
             val_acc, val_loss = self.validate_model(self.val_loader, self.model)
-            print(train_acc,train_loss)
+            #print(train_acc,train_loss)
             print(val_acc, val_loss)
 
-            if(val_acc>90):
+            if(val_acc>95):
                 checkpoint = {}
                 checkpoint['model'] = self.model.state_dict()
-                save_checkpoint('working_model.chk',checkpoint)
+                save_checkpoint('working_model_{}.chk'.format(val_acc),checkpoint)
+                save_checkpoint('working_model_latest.chk'.format(val_acc),checkpoint)
 
     def validate_model(self, loader, model):
         model.eval()
@@ -147,8 +153,6 @@ class Trainer():
         i = 0
         for images, labels in loader:
             i+=1
-            if(i>10):
-                break
             images_batch = torch.tensor(images)
             labels_batch = Variable(labels)
 
@@ -194,7 +198,7 @@ def main():
                                                     sampler=valid_sampler)
 
     trainer = Trainer(train_loader,validation_loader)
-    trainer.load('working_model.chk')
+    trainer.load('working_model_latest.chk')
     trainer.train()
 
 if __name__ == '__main__':
