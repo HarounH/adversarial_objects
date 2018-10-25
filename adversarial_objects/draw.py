@@ -15,27 +15,6 @@ from skimage.io import imread, imsave
 import PIL
 from torchvision import transforms
 
-# directory set up
-current_dir = os.path.dirname(os.path.realpath(__file__))
-data_dir = os.path.join(current_dir, 'data')
-output_dir = os.path.join(current_dir, 'output')
-evil_cube_filename = 'evil_cube.obj'
-
-try:
-    os.makedirs(output_dir)
-except:
-    pass
-
-# parameters
-parser = argparse.ArgumentParser()
-parser.add_argument("-bg", "--background", dest="background", type=str, default="highway.jpg", help="Path to background file (image)")
-parser.add_argument("-obj", "--object", dest="object", type=str, default="custom_stop_sign.obj", help="Name of .obj file containing stop sign")
-parser.add_argument("-o", "--output", dest="output_filename", type=str, default="custom_stop_sign.png", help="Filename for output image")
-parser.add_argument("-angle", "--azimuth", dest="azimuth", type=float, default=90.0, help="Azimuth angle to use for rendering")
-parser.add_argument("--camera_distance", dest="camera_distance", type=float, default=2.732, help="Camera distance to use for rendering")
-parser.add_argument("--image_size", type=int, default=256, help="Size of square image")
-args = parser.parse_args()
-
 
 class Background(nn.Module):
     def __init__(self, filepath, args):
@@ -45,11 +24,12 @@ class Background(nn.Module):
 
     def render_image(self):
         transform = transforms.Compose([
-            transforms.Resize((self.image_size, self.image_size)),
+            transforms.CenterCrop((self.image_size, self.image_size)),
             transforms.ToTensor(),
         ])
         data = np.transpose(transform(self.image), [1, 2, 0]).detach().numpy()
-        return (data - data.min()) / (data.max() - data.min())
+        return torch.as_tensor((data - data.min()) / (data.max() - data.min()))
+
 
 class Object(nn.Module):
     def __init__(self, obj_filename, texture_wrapping='REPEAT', use_bilinear=True, adversarial_affine=False, adversarial_textures=False):
@@ -61,6 +41,7 @@ class Object(nn.Module):
             texture_size=4,
             texture_wrapping=texture_wrapping,
             use_bilinear=use_bilinear,
+            normalization=False,
         )
         self.vertices = vertices[None, :, :].cuda()
         self.faces = faces[None, :, :].cuda()
@@ -98,15 +79,38 @@ class Object(nn.Module):
 
 
 def combine_images_in_order(image_list, args):
-    result = np.zeros(image_list[0].shape, dtype=float)
+    result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
     for image in image_list:
-        selector = np.repeat((np.abs(image).sum(axis=2, keepdims=True) == 0).astype(float), 3, axis=2)
-        result = np.multiply(result, selector) + image
+        selector = (torch.abs(image).sum(dim=2, keepdim=True) == 0).float()
+        result = result * selector + image
     result = (result - result.min()) / (result.max() - result.min())
     return result
 
 
 if __name__ == '__main__':
+    # directory set up
+    current_dir = os.path.dirname(os.path.realpath(__file__))
+    data_dir = os.path.join(current_dir, 'data')
+    output_dir = os.path.join(current_dir, 'output')
+    evil_cube_filename = 'evil_cube.obj'
+
+    try:
+        os.makedirs(output_dir)
+    except:
+        pass
+
+    # parameters
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-bg", "--background", dest="background", type=str, default="highway.jpg", help="Path to background file (image)")
+    parser.add_argument("-obj", "--object", dest="object", type=str, default="custom_stop_sign.obj", help="Name of .obj file containing stop sign")
+    parser.add_argument("-o", "--output", dest="output_filename", type=str, default="custom_stop_sign.png", help="Filename for output image")
+    parser.add_argument("-angle", "--azimuth", dest="azimuth", type=float, default=90.0, help="Azimuth angle to use for rendering")
+    parser.add_argument("--camera_distance", dest="camera_distance", type=float, default=2.732, help="Camera distance to use for rendering")
+    parser.add_argument("--image_size", type=int, default=256, help="Size of square image")
+    args = parser.parse_args()
+
+
+    raise NotImplementedError("combine_images_in_order takes tensors, but given numpy matrices.")
     # TODO: Load background
     background = Background(os.path.join(data_dir, args.background), args)
     bg_img = background.render_image()
