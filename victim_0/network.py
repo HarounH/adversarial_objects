@@ -91,7 +91,7 @@ class TrafficSignClassifier(nn.Module):
         x = self.conv(x)
         x = x.view(x.size(0), -1)
         x = self.final(x)
-        return torch.nn.functional.log_softmax(x,dim=0)
+        return x
 
 
 # Training 
@@ -198,7 +198,7 @@ def main():
                                                     sampler=valid_sampler)
 
     trainer = Trainer(train_loader,validation_loader)
-    trainer.load('working_model_latest.chk')
+    #trainer.load('working_model_latest.chk')
     trainer.train()
 
 if __name__ == '__main__':
