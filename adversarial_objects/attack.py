@@ -67,7 +67,7 @@ parser.add_argument("--translation_clamp", default=1.0, type=float, help="L1 con
 parser.add_argument("--rotation_clamp", default=2.0 * np.pi, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=1.0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
 # Projection specifications
-parser.add_argument("--projection_modes", nargs='+', choices=ALLOWED_PROJECTIONS, type=str, help="What kind of projections to use for attack.")
+parser.add_argument("--projection_modes", nargs='+', default=["azimuth"], choices=ALLOWED_PROJECTIONS, type=str, help="What kind of projections to use for attack.")
 # Hardware
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
 
@@ -78,6 +78,28 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 data_dir = os.path.join(current_dir, args.data_dir)
 output_dir = os.path.join(current_dir, args.output_dir)
 tensorboard_dir = os.path.join(current_dir, args.tensorboard_dir)
+
+
+def create_affine_transform(scaling, translation, rotation):
+    scaling_matrix = torch.eye(4)
+    for i in range(3):
+        scaling_matrix[i, i] = scaling[i]
+    translation_matrix = torch.eye(4)
+    for i in range(3):
+        translation_matrix[i, 3] = translation[i]
+    rotation_x = torch.eye(4)
+    rotation_x[1, 1] = rotation_x[2, 2] = torch.cos(rotation[0])
+    rotation_x[1, 2] = -torch.sin(rotation[0])
+    rotation_x[2, 1] = -rotation_x[1, 2]
+    rotation_y = torch.eye(4)
+    rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(rotation[1])
+    rotation_y[0, 2] = torch.sin(rotation[1])
+    rotation_y[2, 0] = -rotation_y[0, 2]
+    rotation_z = torch.eye(4)
+    rotation_z[0, 0] = rotation_z[1, 1] = torch.cos(rotation[2])
+    rotation_z[0, 1] = -torch.sin(rotation[2])
+    rotation_z[1, 0] = -rotation_z[0, 1]
+    return rotation_x.mm(rotation_y.mm(rotation_z.mm(translation_matrix.mm(scaling_matrix))))
 
 if __name__ == '__main__':
     # Load background
@@ -94,14 +116,16 @@ if __name__ == '__main__':
         os.path.join(data_dir, args.evil_cube_path)
     )
     parameters = {}
+
     if args.translation_clamp > 0:
-        translation_param = torch.randn((3,), requires_grad=True)
+        translation_param = torch.randn((3,), device='cuda')
+        translation_param.requires_grad_(True)
         parameters['translation'] = translation_param
     if args.rotation_clamp > 0:
-        rotation_param = torch.randn((3,), requires_grad=True)
+        rotation_param = torch.randn((3,), requires_grad=True, device='cuda')
         parameters['rotation'] = rotation_param
     if args.scaling_clamp > 0:
-        scaling_param = torch.randn((3,), requires_grad=True)
+        scaling_param = torch.rand((3,), requires_grad=True, device='cuda')
         parameters['scaling'] = scaling_param
 
     optimizer = optim.Adam(
@@ -128,24 +152,43 @@ if __name__ == '__main__':
     # Ensure that adversary is adversarial
     y = victim(image)
     ypred = torch.argmax(y)
-    print("y: {}".format(y))
-    print("ypred: {}".format(ypred))
+    # print("y: {}".format(y))
+    # print("ypred: {}".format(ypred))
 
-    raise NotImplementedError("Stuff after this isn't implemented")
     # Optimize loss function
     writer = SummaryWriter(log_dir=args.tensorboard_dir)
     loss_handler = LossHandler()
 
-    if args.cuda:
-        raise NotImplementedError("Move stuff to cuda")
-    else:
-        raise NotImplementedError("Figure it out")
     for i in range(args.max_iterations):
         # TODO: Consider batching by parallelizing over renderers.
         # Sample a projection
-        # Create image using projection, parameters
+        if "azimuth" in args.projection_modes:
+            azimuth = np.random.uniform(75, 105)
+        # projection, parameters
+        renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
+        # Create image
+        cube_image = renderer(*base_cube.render_parameters(
+            affine_transform=create_affine_transform(
+                parameters['scaling'],
+                parameters['translation'],
+                parameters['rotation'],
+            )))
+        cube_image = cube_image.squeeze().permute(1, 2, 0)
+
+        obj_image = renderer(*(stop_sign.render_parameters())) # [1, RGB, is, is]
+        obj_image = obj_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
+
+        image = combine_images_in_order([bg_img, obj_image, cube_image], args) # [is, is, RGB]
+        imsave(os.path.join(output_dir, "iter{}.".format(i) + args.output_filename), image.detach().cpu().numpy())
+        image = image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
+        pdb.set_trace()
         # Run victim on created image.
+        y = victim(image)
+
         # Construct Loss
+
+        
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()

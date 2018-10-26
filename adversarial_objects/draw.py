@@ -77,7 +77,6 @@ class Object(nn.Module):
         textures = self.textures
         return [vertices.cuda(), faces.cuda(), textures.cuda()]
 
-
 def combine_images_in_order(image_list, args):
     result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
     for image in image_list:
