@@ -63,7 +63,7 @@ parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at 
 parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
 
 # Attack specification
-parser.add_argument("--translation_clamp", default=1.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
+parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=2.0 * np.pi, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=1.0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
 # Projection specifications
@@ -79,6 +79,20 @@ data_dir = os.path.join(current_dir, args.data_dir)
 output_dir = os.path.join(current_dir, args.output_dir)
 tensorboard_dir = os.path.join(current_dir, args.tensorboard_dir)
 
+def combine_objects(vs,fs,ts):
+    print("TODO: ptimize combine_objects")
+    n = len(vs)
+    v = vs[0]
+    f = fs[0]
+    t = ts[0]
+    # pdb.set_trace()
+    for i in range(1, n):
+        face_offset = v.shape[1]
+        v = torch.cat([v, vs[i]], dim=1)
+        f = torch.cat([f, face_offset + fs[i]], dim=1)
+        t = torch.cat([t, ts[i]], dim=1)
+
+    return [v, f, t]
 
 def create_affine_transform(scaling, translation, rotation):
     scaling_matrix = torch.eye(4)
@@ -86,18 +100,18 @@ def create_affine_transform(scaling, translation, rotation):
         scaling_matrix[i, i] = scaling[i]
     translation_matrix = torch.eye(4)
     for i in range(3):
-        translation_matrix[i, 3] = translation[i]
+        translation_matrix[3, i] = translation[i]
     rotation_x = torch.eye(4)
     rotation_x[1, 1] = rotation_x[2, 2] = torch.cos(rotation[0])
-    rotation_x[1, 2] = -torch.sin(rotation[0])
+    rotation_x[1, 2] = torch.sin(rotation[0])
     rotation_x[2, 1] = -rotation_x[1, 2]
     rotation_y = torch.eye(4)
     rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(rotation[1])
-    rotation_y[0, 2] = torch.sin(rotation[1])
+    rotation_y[0, 2] = -torch.sin(rotation[1])
     rotation_y[2, 0] = -rotation_y[0, 2]
     rotation_z = torch.eye(4)
     rotation_z[0, 0] = rotation_z[1, 1] = torch.cos(rotation[2])
-    rotation_z[0, 1] = -torch.sin(rotation[2])
+    rotation_z[0, 1] = torch.sin(rotation[2])
     rotation_z[1, 0] = -rotation_z[0, 1]
     return rotation_x.mm(rotation_y.mm(rotation_z.mm(translation_matrix.mm(scaling_matrix))))
 
@@ -118,7 +132,7 @@ if __name__ == '__main__':
     parameters = {}
 
     if args.translation_clamp > 0:
-        translation_param = torch.randn((3,), device='cuda')
+        translation_param = torch.randn((3,), device='cuda') + torch.tensor([2.5,0,0],device='cuda')
         translation_param.requires_grad_(True)
         parameters['translation'] = translation_param
     if args.rotation_clamp > 0:
@@ -150,8 +164,8 @@ if __name__ == '__main__':
     # Load model
     victim = get_victim(args.victim_path).cuda()  # nn.Module
     # Ensure that adversary is adversarial
-    y = victim(image)
-    ypred = torch.argmax(y)
+    ytrue = victim(image)
+    ytrue_label = torch.argmax(ytrue)
     # print("y: {}".format(y))
     # print("ypred: {}".format(ypred))
 
@@ -160,6 +174,12 @@ if __name__ == '__main__':
     loss_handler = LossHandler()
 
     for i in range(args.max_iterations):
+        if args.scaling_clamp>0.0:
+            parameters['scaling'].data.clamp_(0, args.scaling_clamp)
+        if args.translation_clamp>0.0:
+            parameters['translation'].data.clamp_(-args.translation_clamp, args.translation_clamp)
+        if args.rotation_clamp>0.0:
+            parameters['rotation'].data.clamp_(-args.rotation_clamp, args.rotation_clamp)
         # TODO: Consider batching by parallelizing over renderers.
         # Sample a projection
         if "azimuth" in args.projection_modes:
@@ -167,27 +187,28 @@ if __name__ == '__main__':
         # projection, parameters
         renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
         # Create image
-        cube_image = renderer(*base_cube.render_parameters(
+        cube_vft = (base_cube.render_parameters(
             affine_transform=create_affine_transform(
                 parameters['scaling'],
                 parameters['translation'],
                 parameters['rotation'],
             )))
-        cube_image = cube_image.squeeze().permute(1, 2, 0)
+        # cube_image = cube_image.squeeze().permute(1, 2, 0)
 
-        obj_image = renderer(*(stop_sign.render_parameters())) # [1, RGB, is, is]
-        obj_image = obj_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
+        obj_vft = ((stop_sign.render_parameters())) # [1, RGB, is, is]
+        vft = combine_objects([obj_vft[0], cube_vft[0]], [obj_vft[1], cube_vft[1]], [obj_vft[2], cube_vft[2]])
+        image = renderer(*vft)
+        image = image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
 
-        image = combine_images_in_order([bg_img, obj_image, cube_image], args) # [is, is, RGB]
+        # image = ombine_images_in_order([bg_img, obj_image, cube_image], args) # [is, is, RGB]
         imsave(os.path.join(output_dir, "iter{}.".format(i) + args.output_filename), image.detach().cpu().numpy())
         image = image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
-        pdb.set_trace()
+        # pdb.set_trace()
         # Run victim on created image.
         y = victim(image)
 
         # Construct Loss
-
-        
+        loss = y[:,ytrue_label].mean()
 
         optimizer.zero_grad()
         loss.backward()
@@ -196,4 +217,30 @@ if __name__ == '__main__':
         loss_handler['loss'][i].append(loss.item())
         loss_handler.log_epoch(writer, i)
     # Output
-    raise NotImplementedError("Output final adversarial image")
+    print(torch.argmax(y.detach()))
+    loop = tqdm.tqdm(range(0, 360, 4))
+    writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
+    for num, azimuth in enumerate(loop):
+        # pdb.set_trace()
+        loop.set_description('Drawing')
+        # projection, parameters
+        renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
+        # Create image
+        cube_vft = (base_cube.render_parameters(
+            affine_transform=create_affine_transform(
+                parameters['scaling'],
+                parameters['translation'],
+                parameters['rotation'],
+            )))
+        # cube_image = cube_image.squeeze().permute(1, 2, 0)
+
+        obj_vft = ((stop_sign.render_parameters())) # [1, RGB, is, is]
+        vft = combine_objects([obj_vft[0], cube_vft[0]], [obj_vft[1], cube_vft[1]], [obj_vft[2], cube_vft[2]])
+        image = renderer(*vft)
+        image = image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
+
+
+        image = image.detach().cpu().numpy()
+        # image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))  # [image_size, image_size, RGB]
+        writer.append_data((255*image).astype(np.uint8))
+    writer.close()
