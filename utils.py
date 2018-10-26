@@ -1,3 +1,6 @@
+from collections import defaultdict
+import numpy as np
+
 class LossHandler:
     def __init__(self):
         # name -> epoch -> list (per batch)
