@@ -66,6 +66,7 @@ parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=2.0 * np.pi, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=1.0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
+parser.add_argument("--adv_tex", action="store_true", default=False, help="Attack using texture too?")
 # Projection specifications
 parser.add_argument("--projection_modes", nargs='+', default=["azimuth"], choices=ALLOWED_PROJECTIONS, type=str, help="What kind of projections to use for attack.")
 # Hardware
@@ -127,7 +128,8 @@ if __name__ == '__main__':
     stop_sign.vertices += stop_sign_translation
     # Create adversary
     base_cube = Object(
-        os.path.join(data_dir, args.evil_cube_path)
+        os.path.join(data_dir, args.evil_cube_path),
+        adversarial_textures=args.adv_tex,
     )
     parameters = {}
 
