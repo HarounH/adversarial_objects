@@ -143,6 +143,8 @@ if __name__ == '__main__':
     if args.scaling_clamp > 0:
         scaling_param = torch.rand((3,), requires_grad=True, device='cuda')
         parameters['scaling'] = scaling_param
+    if args.adv_tex:
+        parameters['texture'] = base_cube.textures
 
     optimizer = optim.Adam(
         [v for _, v in parameters.items()],
