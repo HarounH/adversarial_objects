@@ -51,7 +51,7 @@ class Object(nn.Module):
             self.adversarial_affine_transform[0, 3] = 0.5
             self.adversarial_affine_transform[1, 3] = 0.5
         if adversarial_textures:
-            self.textures = nn.Parameter(textures.unsqueeze(0))
+            self.textures = nn.Parameter(textures.unsqueeze(0)).cuda()
         else:
             self.textures = textures.unsqueeze(0).cuda()
         self.cuda()
