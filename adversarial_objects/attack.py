@@ -63,7 +63,7 @@ parser.add_argument("-o", "--output", dest="output_filename", type=str, default=
 parser.add_argument("-iter", "--max_iterations", type=int, default=100, help="Number of iterations to attack for.")
 parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at which to do steps.")
 parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
-
+parser.add_argument("--bs", default=4, type=int, help="Batch size")
 # Attack specification
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=2.0 * np.pi, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
@@ -191,10 +191,6 @@ if __name__ == '__main__':
             parameters['rotation'].data.clamp_(-args.rotation_clamp, args.rotation_clamp)
         # TODO: Consider batching by parallelizing over renderers.
         # Sample a projection
-        if "azimuth" in args.projection_modes:
-            azimuth = np.random.uniform(75, 105)
-        # projection, parameters
-        renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
         # Create image
         cube_vft = (base_cube.render_parameters(
             affine_transform=create_affine_transform(
@@ -206,14 +202,44 @@ if __name__ == '__main__':
 
         obj_vft = ((stop_sign.render_parameters())) # [1, RGB, is, is]
         vft = combine_objects([obj_vft[0], cube_vft[0]], [obj_vft[1], cube_vft[1]], [obj_vft[2], cube_vft[2]])
-        image = renderer(*vft)
-        image = image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
 
-        # image = ombine_images_in_order([bg_img, obj_image, cube_image], args) # [is, is, RGB]
-        imsave(os.path.join(output_dir, "iter{}.".format(i) + args.output_filename), image.detach().cpu().numpy())
-        image = image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
-        # pdb.set_trace()
+        if "azimuth" in args.projection_modes:
+            rot_matrices = []
+            for idx in range(args.bs):
+                angle = np.random.uniform(75, 105)
+                rotation_y = torch.eye(4)
+                rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle))
+                rotation_y[0, 2] = -torch.sin(torch.tensor(angle))
+                rotation_y[2, 0] = -rotation_y[0, 2]
+                rotation_y = rotation_y.unsqueeze(0)
+                rot_matrices.append(rotation_y)
+            rot_matrices = torch.cat(rot_matrices).cuda()
+        # projection, parameters
+        renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
+
+        vft[0] = torch.bmm(
+            torch.cat(
+                (
+                    vft[0].expand(args.bs, *(vft[0].shape[1:])),
+                    torch.ones(([args.bs] + list(vft[0].shape[1:-1]) + [1])).float().cuda(),
+                ),
+                dim=2),
+            rot_matrices,
+        )[:, :, :3]
+
+        vft[1] = vft[1].expand(args.bs, *(vft[1].shape[1:]))
+        vft[2] = vft[2].expand(args.bs, *(vft[2].shape[1:]))
+
+        image = renderer(*vft)  # [bs, 3, is, is]
+
+        for bi in range(image.shape[0]):
+            imsave(
+                os.path.join(output_dir, "batch{}.iter{}.".format(bi, i) + args.output_filename),
+                np.transpose(image.detach().cpu().numpy()[bi], (1, 2, 0)),
+            )
+
         # Run victim on created image.
+
         y = victim(image)
 
         # Construct Loss
@@ -234,7 +260,7 @@ if __name__ == '__main__':
     # Count how many adversarial images are classified as the true_label
     correct_adv = 0
     # The labels of the adversarial image from different azimuths when the detection is succesful
-    adv_labels = [] 
+    adv_labels = []
     loop = tqdm.tqdm(range(75, 105, 1))
     # loop = tqdm.tqdm(range(0, 360, 4))
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
@@ -274,10 +300,10 @@ if __name__ == '__main__':
         y_raw_label = torch.argmax(y_raw)
 
         if y_raw_label == ytrue_label:
-            correct_raw+=1
+            correct_raw += 1
             adv_labels.append(y_adv_label)
         if y_raw_label == ytrue_label and y_adv_label==ytrue_label:
-            correct_adv+=1
+            correct_adv += 1
     writer.close()
     print("Raw accuracy: {}/{} Attack accuracy: {}/{}".format(correct_raw,len(loop),correct_raw-correct_adv,correct_raw))
     most_frequent_attack_label = int(max(set(adv_labels), key=adv_labels.count).detach().cpu().numpy())
