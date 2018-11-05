@@ -35,6 +35,7 @@ from draw import (
 from victim_0.network import get_victim
 from tensorboardX import SummaryWriter
 from utils import LossHandler
+from utils import SignReader
 
 
 ALLOWED_PROJECTIONS = [
@@ -47,6 +48,7 @@ parser = argparse.ArgumentParser()
 # Input output specifications
 parser.add_argument("--image_size", default=32, type=int, help="Square Image size that neural renderer should create for attacking.")
 parser.add_argument("--victim_path", default="victim_0/working_model_91.chk", help="Path relative current_dir to attack model.")
+parser.add_argument("--signnames_path", default="victim_0/signnames.csv", help="Path where the signnames.csv is located.")
 
 parser.add_argument("-bg", "--background", dest="background", type=str, default="highway.jpg", help="Path to background file (image)")
 parser.add_argument("-bo", "--base_object", dest="base_object", type=str, default="custom_stop_sign.obj", help="Name of .obj file containing stop sign")
@@ -81,7 +83,7 @@ output_dir = os.path.join(current_dir, args.output_dir)
 tensorboard_dir = os.path.join(current_dir, args.tensorboard_dir)
 
 def combine_objects(vs,fs,ts):
-    print("TODO: ptimize combine_objects")
+    print("TODO: optimize combine_objects")
     n = len(vs)
     v = vs[0]
     f = fs[0]
@@ -117,6 +119,8 @@ def create_affine_transform(scaling, translation, rotation):
     return rotation_x.mm(rotation_y.mm(rotation_z.mm(translation_matrix.mm(scaling_matrix))))
 
 if __name__ == '__main__':
+    # Load signnames
+    signnames = SignReader(args.signnames_path)
     # Load background
     background = Background(os.path.join(data_dir, args.background), args)
     bg_img = background.render_image().cuda()
@@ -169,7 +173,8 @@ if __name__ == '__main__':
     victim = get_victim(args.victim_path).cuda()  # nn.Module
     # Ensure that adversary is adversarial
     ytrue = victim(image)
-    ytrue_label = torch.argmax(ytrue)
+    ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
+    print("Raw image classified by the classifier as: {}".format(signnames[ytrue_label]))
     # print("y: {}".format(y))
     # print("ypred: {}".format(ypred))
 
@@ -220,9 +225,18 @@ if __name__ == '__main__':
         # Print out the loss
         loss_handler['loss'][i].append(loss.item())
         loss_handler.log_epoch(writer, i)
+
+
     # Output
     print(torch.argmax(y.detach()))
-    loop = tqdm.tqdm(range(0, 360, 4))
+    # Count how many raw images are classified as the true_label
+    correct_raw = 0
+    # Count how many adversarial images are classified as the true_label
+    correct_adv = 0
+    # The labels of the adversarial image from different azimuths when the detection is succesful
+    adv_labels = [] 
+    loop = tqdm.tqdm(range(75, 105, 1))
+    # loop = tqdm.tqdm(range(0, 360, 4))
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
     for num, azimuth in enumerate(loop):
         # pdb.set_trace()
@@ -240,11 +254,35 @@ if __name__ == '__main__':
 
         obj_vft = ((stop_sign.render_parameters())) # [1, RGB, is, is]
         vft = combine_objects([obj_vft[0], cube_vft[0]], [obj_vft[1], cube_vft[1]], [obj_vft[2], cube_vft[2]])
-        image = renderer(*vft)
-        image = image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
+        raw_image = renderer(*obj_vft)
+        adv_image = renderer(*vft)
+        adv_image = adv_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
+        raw_image = raw_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
 
 
-        image = image.detach().cpu().numpy()
+        adv_image_ = adv_image.detach().cpu().numpy()
         # image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))  # [image_size, image_size, RGB]
-        writer.append_data((255*image).astype(np.uint8))
+        writer.append_data((255*adv_image_).astype(np.uint8))
+
+        # Validation
+        adv_image = adv_image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
+        raw_image = raw_image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
+        # Run victim on created image.
+        y_adv = victim(adv_image)
+        y_raw = victim(raw_image)
+        y_adv_label = torch.argmax(y_adv)
+        y_raw_label = torch.argmax(y_raw)
+
+        if y_raw_label == ytrue_label:
+            correct_raw+=1
+            adv_labels.append(y_adv_label)
+        if y_raw_label == ytrue_label and y_adv_label==ytrue_label:
+            correct_adv+=1
     writer.close()
+    print("Raw accuracy: {}/{} Attack accuracy: {}/{}".format(correct_raw,len(loop),correct_raw-correct_adv,correct_raw))
+    most_frequent_attack_label = int(max(set(adv_labels), key=adv_labels.count).detach().cpu().numpy())
+    print("Most frequently predicted as {}: {}, {} out of {} times ".format(
+        most_frequent_attack_label,
+        signnames[most_frequent_attack_label],
+        adv_labels.count(most_frequent_attack_label),
+        len(adv_labels)))
