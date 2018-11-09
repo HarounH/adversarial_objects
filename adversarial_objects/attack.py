@@ -82,7 +82,7 @@ data_dir = os.path.join(current_dir, args.data_dir)
 output_dir = os.path.join(current_dir, args.output_dir)
 tensorboard_dir = os.path.join(current_dir, args.tensorboard_dir)
 
-def combine_objects(vs,fs,ts):
+def combine_objects(vs, fs, ts):
     print("TODO: optimize combine_objects")
     n = len(vs)
     v = vs[0]
