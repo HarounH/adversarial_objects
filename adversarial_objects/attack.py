@@ -88,6 +88,7 @@ tensorboard_dir = os.path.join(current_dir, args.tensorboard_dir)
 np.random.seed(args.seed)
 torch.backends.cudnn.deterministic = True
 torch.manual_seed(args.seed)
+torch.cuda.manual_seed_all(args.seed)
 
 
 def combine_objects(vs,fs,ts):
@@ -178,6 +179,7 @@ if __name__ == '__main__':
     image = image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
     # Load model
     victim = get_victim(args.victim_path).cuda()  # nn.Module
+    victim.eval()
     # Ensure that adversary is adversarial
     ytrue = victim(image)
     ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
@@ -268,12 +270,12 @@ if __name__ == '__main__':
     correct_adv = 0
     # The labels of the adversarial image from different azimuths when the detection is succesful
     adv_labels = []
-    loop = tqdm.tqdm(range(75, 105, 1))
+    loop = range(75, 105, 1)
     # loop = tqdm.tqdm(range(0, 360, 4))
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
     for num, azimuth in enumerate(loop):
         # pdb.set_trace()
-        loop.set_description('Drawing')
+        # loop.set_description('Drawing')
         # projection, parameters
         renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
         # Create image
