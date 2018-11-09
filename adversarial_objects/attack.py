@@ -74,6 +74,8 @@ parser.add_argument("--projection_modes", nargs='+', default=["azimuth"], choice
 # Hardware
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
 
+parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
+
 args = parser.parse_args()
 args.cuda = args.cuda and torch.cuda.is_available()
 
@@ -82,8 +84,13 @@ data_dir = os.path.join(current_dir, args.data_dir)
 output_dir = os.path.join(current_dir, args.output_dir)
 tensorboard_dir = os.path.join(current_dir, args.tensorboard_dir)
 
-def combine_objects(vs, fs, ts):
-    print("TODO: optimize combine_objects")
+
+np.random.seed(args.seed)
+torch.backends.cudnn.deterministic = True
+torch.manual_seed(args.seed)
+
+
+def combine_objects(vs,fs,ts):
     n = len(vs)
     v = vs[0]
     f = fs[0]
