@@ -29,9 +29,70 @@ import pdb
 import neural_renderer as nr
 from draw import (
     Background,
-    Object,
-    combine_images_in_order,
 )
+
+class Object(nn.Module):
+    def __init__(self, obj_filename, texture_wrapping='REPEAT', use_bilinear=True, adversarial_affine=False, adversarial_textures=False, adversarial_object = False):
+        super(Object, self).__init__()
+        assert torch.cuda.is_available()
+        vertices, faces, textures = nr.load_obj(
+            obj_filename,
+            load_texture=True,
+            texture_size=4,
+            texture_wrapping=texture_wrapping,
+            use_bilinear=use_bilinear,
+            normalization=False,
+        )
+        self.adversarial_object = adversarial_object
+        self.vertices = vertices[None, :, :].cuda()
+        self.faces = faces[None, :, :].cuda()
+
+        if adversarial_object:
+            self.vertices_constants = self.vertices[:,4:,:]+torch.tensor([1.0,0,0],device="cuda")
+            self.vertices_vars = nn.Parameter(self.vertices[:,0:4,:]+torch.tensor([1.0,0,0],device="cuda"),requires_grad=True)
+            self.vertices = torch.cat([self.vertices_constants,self.vertices_vars],dim=1)
+        # if adversarial_object and adversarial_affine:
+        #     self.adversarial_affine_transform = nn.Parameter(0.1 * torch.eye(4).float() + 0.005 * torch.randn((4, 4)).float())
+        #     self.adversarial_affine_transform[0, 3] = 0.5
+        #     self.adversarial_affine_transform[1, 3] = 0.5
+        if adversarial_object and adversarial_textures:
+            self.textures = nn.Parameter(textures.unsqueeze(0)).cuda()
+        else:
+            self.textures = textures.unsqueeze(0).cuda()
+        self.cuda()
+
+    def render_parameters(self, affine_transform=None):
+        vertices, faces, textures = self.vertices, self.faces, self.textures
+        if self.adversarial_object:
+            vertices = torch.cat([self.vertices_constants,self.vertices_vars],dim=1)
+        if affine_transform is not None:
+            # vertices are bs, nv, 3
+            bs = vertices.shape[0]
+            affine_transform = affine_transform.unsqueeze(0).expand([bs] + list(affine_transform.shape)).cuda()
+            ones = torch.ones((list(vertices.shape[:-1]) + [1])).float().cuda()
+            vertices = torch.cat((vertices, ones), dim=2)
+            vertices = torch.bmm(vertices, affine_transform)[:, :, :3]
+        elif hasattr(self, 'adversarial_affine_transform'):
+            bs = vertices.shape[0]
+            affine_transform = self.adversarial_affine_transform.unsqueeze(0).expand([bs, 4, 4]).cuda()
+            ones = torch.ones((list(vertices.shape[:-1]) + [1])).float().cuda()
+            vertices = torch.cat((vertices, ones), dim=2)
+            vertices = torch.bmm(vertices, affine_transform)[:, :, :3]
+        else:
+            vertices = self.vertices
+        faces = self.faces
+        textures = self.textures
+        return [vertices.cuda(), faces.cuda(), textures.cuda()]
+
+def combine_images_in_order(image_list, args):
+    result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
+    for image in image_list:
+        selector = (torch.abs(image).sum(dim=2, keepdim=True) == 0).float()
+        result = result * selector + image
+    result = (result - result.min()) / (result.max() - result.min())
+    return result
+
+
 from victim_0.network import get_victim
 from tensorboardX import SummaryWriter
 from utils import LossHandler
@@ -52,7 +113,7 @@ parser.add_argument("--signnames_path", default="victim_0/signnames.csv", help="
 
 parser.add_argument("-bg", "--background", dest="background", type=str, default="highway.jpg", help="Path to background file (image)")
 parser.add_argument("-bo", "--base_object", dest="base_object", type=str, default="custom_stop_sign.obj", help="Name of .obj file containing stop sign")
-parser.add_argument("-cp", "--cube_path", dest="evil_cube_path", default="evil_cube.obj", help="Path to basic cube shape")
+parser.add_argument("-cp", "--cube_path", dest="evil_cube_path", default="evil_cube_1.obj", help="Path to basic cube shape")
 
 parser.add_argument("--data_dir", type=str, default='data', help="Location where data is present")
 parser.add_argument("--tensorboard_dir", dest="tensorboard_dir", type=str, default="tensorboard", help="Subdirectory to save logs using tensorboard")  # noqa
@@ -66,8 +127,8 @@ parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='
 parser.add_argument("--bs", default=4, type=int, help="Batch size")
 # Attack specification
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
-parser.add_argument("--rotation_clamp", default=2.0 * np.pi, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
-parser.add_argument("--scaling_clamp", default=1.0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
+parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
+parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
 parser.add_argument("--adv_tex", action="store_true", default=False, help="Attack using texture too?")
 # Projection specifications
 parser.add_argument("--projection_modes", nargs='+', default=["azimuth"], choices=ALLOWED_PROJECTIONS, type=str, help="What kind of projections to use for attack.")
@@ -75,6 +136,7 @@ parser.add_argument("--projection_modes", nargs='+', default=["azimuth"], choice
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
 
 parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
+parser.add_argument("--validation_range", default=30, type=int, help="Range over which to validate the image")
 
 args = parser.parse_args()
 args.cuda = args.cuda and torch.cuda.is_available()
@@ -110,7 +172,7 @@ def create_affine_transform(scaling, translation, rotation):
     for i in range(3):
         scaling_matrix[i, i] = scaling[i]
     translation_matrix = torch.eye(4)
-    for i in range(3):
+    for i in range(1,3):
         translation_matrix[3, i] = translation[i]
     rotation_x = torch.eye(4)
     rotation_x[1, 1] = rotation_x[2, 2] = torch.cos(rotation[0])
@@ -136,40 +198,49 @@ if __name__ == '__main__':
     stop_sign = Object(
         os.path.join(data_dir, args.base_object),
     )
-    stop_sign_translation = torch.tensor([0.75, -1.5, 0.0]).cuda()
+    stop_sign_translation = torch.tensor([0.0, -1.5, 0.0]).cuda()
     stop_sign.vertices += stop_sign_translation
     # Create adversary
     base_cube = Object(
         os.path.join(data_dir, args.evil_cube_path),
         adversarial_textures=args.adv_tex,
+        adversarial_object=True,
     )
     parameters = {}
-
+    parameters['vertices']=base_cube.vertices_vars
     if args.translation_clamp > 0:
-        translation_param = torch.randn((3,), device='cuda') + torch.tensor([2.5,0,0],device='cuda')
+        translation_param = torch.tensor([0,0.2,0.2],device="cuda")*torch.randn((3,), device='cuda') + torch.tensor([0.0,0,0],device='cuda')
         translation_param.requires_grad_(True)
         parameters['translation'] = translation_param
     if args.rotation_clamp > 0:
         rotation_param = torch.randn((3,), requires_grad=True, device='cuda')
         parameters['rotation'] = rotation_param
+        print("HI:)")
+    else:
+        parameters['rotation'] = torch.zeros((3,),requires_grad=False,device='cuda')
     if args.scaling_clamp > 0:
         scaling_param = torch.rand((3,), requires_grad=True, device='cuda')
         parameters['scaling'] = scaling_param
+        print("HI:)")
+    else:
+        parameters['scaling'] = torch.ones((3,),requires_grad=False,device='cuda')*0.2
     if args.adv_tex:
         parameters['texture'] = base_cube.textures
 
     optimizer = optim.Adam(
-        [v for _, v in parameters.items()],
+        list(filter(lambda p : p.requires_grad, [v for _, v in parameters.items()])),
         lr=args.lr,
         weight_decay=args.weight_decay
     )
 
     # Render into image
     renderer = nr.Renderer(camera_mode='look_at', image_size=args.image_size)
-    camera_distance = 2.72  # Constant
+    renderer2 = nr.Renderer(camera_mode='look_at', image_size=3*args.image_size)
+    camera_distance = 2.72-0.75  # Constant
     elevation = 0.0
     azimuth = 90.0
     renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
+    renderer2.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
 
     obj_image = renderer(*(stop_sign.render_parameters())) # [1, RGB, is, is]
     obj_image = obj_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
@@ -198,6 +269,8 @@ if __name__ == '__main__':
             parameters['translation'].data.clamp_(-args.translation_clamp, args.translation_clamp)
         if args.rotation_clamp>0.0:
             parameters['rotation'].data.clamp_(-args.rotation_clamp, args.rotation_clamp)
+        if args.adv_tex:
+            parameters['texture'].data.clamp_(-0.9, 0.9)
         # TODO: Consider batching by parallelizing over renderers.
         # Sample a projection
         # Create image
@@ -240,12 +313,13 @@ if __name__ == '__main__':
         vft[2] = vft[2].expand(args.bs, *(vft[2].shape[1:]))
 
         image = renderer(*vft)  # [bs, 3, is, is]
-
-        for bi in range(image.shape[0]):
-            imsave(
-                os.path.join(output_dir, "batch{}.iter{}.".format(bi, i) + args.output_filename),
-                np.transpose(image.detach().cpu().numpy()[bi], (1, 2, 0)),
-            )
+        if i%10 ==0:
+            pdb.set_trace()
+            for bi in range(1):
+                imsave(
+                    os.path.join(output_dir, "batch{}.iter{}.".format(bi, i) + args.output_filename),
+                    np.transpose(image.detach().cpu().numpy()[bi], (1, 2, 0)),
+                )
 
         # Run victim on created image.
 
@@ -257,12 +331,15 @@ if __name__ == '__main__':
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+
         # Print out the loss
         loss_handler['loss'][i].append(loss.item())
         loss_handler.log_epoch(writer, i)
 
 
     # Output
+    pdb.set_trace()
     print(torch.argmax(y.detach()))
     # Count how many raw images are classified as the true_label
     correct_raw = 0
@@ -270,14 +347,16 @@ if __name__ == '__main__':
     correct_adv = 0
     # The labels of the adversarial image from different azimuths when the detection is succesful
     adv_labels = []
-    loop = range(75, 105, 1)
+    loop = range(90-args.validation_range, 90+args.validation_range, 1)
     # loop = tqdm.tqdm(range(0, 360, 4))
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
+    writer2 = imageio.get_writer(os.path.join(output_dir, "final_cube_" + args.output_filename + '.gif'), mode='I')
     for num, azimuth in enumerate(loop):
         # pdb.set_trace()
         # loop.set_description('Drawing')
         # projection, parameters
         renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
+        renderer2.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth*180.0/args.validation_range)
         # Create image
         cube_vft = (base_cube.render_parameters(
             affine_transform=create_affine_transform(
@@ -289,15 +368,19 @@ if __name__ == '__main__':
 
         obj_vft = ((stop_sign.render_parameters())) # [1, RGB, is, is]
         vft = combine_objects([obj_vft[0], cube_vft[0]], [obj_vft[1], cube_vft[1]], [obj_vft[2], cube_vft[2]])
+        cube_image = renderer2(*cube_vft)
         raw_image = renderer(*obj_vft)
         adv_image = renderer(*vft)
         adv_image = adv_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
         raw_image = raw_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
+        cube_image = cube_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
 
 
         adv_image_ = adv_image.detach().cpu().numpy()
+        cube_image_ = cube_image.detach().cpu().numpy()
         # image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))  # [image_size, image_size, RGB]
         writer.append_data((255*adv_image_).astype(np.uint8))
+        writer2.append_data((255*cube_image_).astype(np.uint8))
 
         # Validation
         adv_image = adv_image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
@@ -314,6 +397,7 @@ if __name__ == '__main__':
         if y_raw_label == ytrue_label and y_adv_label==ytrue_label:
             correct_adv += 1
     writer.close()
+    writer2.close()
     print("Raw accuracy: {}/{} Attack accuracy: {}/{}".format(correct_raw,len(loop),correct_raw-correct_adv,correct_raw))
     most_frequent_attack_label = int(max(set(adv_labels), key=adv_labels.count).detach().cpu().numpy())
     print("Most frequently predicted as {}: {}, {} out of {} times ".format(
