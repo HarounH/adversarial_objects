@@ -38,7 +38,7 @@ class Object(nn.Module):
         vertices, faces, textures = nr.load_obj(
             obj_filename,
             load_texture=True,
-            texture_size=4,
+            texture_size=2,
             texture_wrapping=texture_wrapping,
             use_bilinear=use_bilinear,
             normalization=False,
@@ -48,8 +48,8 @@ class Object(nn.Module):
         self.faces = faces[None, :, :].cuda()
 
         if adversarial_object:
-            self.vertices_constants = self.vertices[:,4:,:]+torch.tensor([1.0,0,0],device="cuda")
-            self.vertices_vars = nn.Parameter(self.vertices[:,0:4,:]+torch.tensor([1.0,0,0],device="cuda"),requires_grad=True)
+            self.vertices_constants = self.vertices[:,4:,:]+torch.tensor([1.02,0,0],device="cuda")
+            self.vertices_vars = nn.Parameter(self.vertices[:,0:4,:]+torch.tensor([1.02,0,0],device="cuda"),requires_grad=True)
             self.vertices = torch.cat([self.vertices_constants,self.vertices_vars],dim=1)
         # if adversarial_object and adversarial_affine:
         #     self.adversarial_affine_transform = nn.Parameter(0.1 * torch.eye(4).float() + 0.005 * torch.randn((4, 4)).float())
@@ -130,6 +130,7 @@ parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 con
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
 parser.add_argument("--adv_tex", action="store_true", default=False, help="Attack using texture too?")
+parser.add_argument("--target_class", default=-1, type=int, help="Class of the target that you want the object to be classified as. Negative if not using a targeted attack")
 # Projection specifications
 parser.add_argument("--projection_modes", nargs='+', default=["azimuth"], choices=ALLOWED_PROJECTIONS, type=str, help="What kind of projections to use for attack.")
 # Hardware
@@ -223,7 +224,7 @@ if __name__ == '__main__':
         parameters['scaling'] = scaling_param
         print("HI:)")
     else:
-        parameters['scaling'] = torch.ones((3,),requires_grad=False,device='cuda')*0.2
+        parameters['scaling'] = torch.ones((3,),requires_grad=False,device='cuda')*0.1
     if args.adv_tex:
         parameters['texture'] = base_cube.textures
 
@@ -255,6 +256,8 @@ if __name__ == '__main__':
     ytrue = victim(image)
     ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
     print("Raw image classified by the classifier as: {}".format(signnames[ytrue_label]))
+    if args.target_class>-1:
+        print("Using a targeted attack to classify the image as: {}".format(signnames[args.target_class]))
     # print("y: {}".format(y))
     # print("ypred: {}".format(ypred))
 
@@ -314,7 +317,7 @@ if __name__ == '__main__':
 
         image = renderer(*vft)  # [bs, 3, is, is]
         if i%10 ==0:
-            pdb.set_trace()
+            # pdb.set_trace()
             for bi in range(1):
                 imsave(
                     os.path.join(output_dir, "batch{}.iter{}.".format(bi, i) + args.output_filename),
@@ -327,6 +330,9 @@ if __name__ == '__main__':
 
         # Construct Loss
         loss = y[:,ytrue_label].mean()
+
+        if args.target_class>-1:
+            loss += -y[:,args.target_class].mean()
 
         optimizer.zero_grad()
         loss.backward()
