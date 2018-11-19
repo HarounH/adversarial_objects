@@ -97,7 +97,7 @@ from victim_0.network import get_victim
 from tensorboardX import SummaryWriter
 from utils import LossHandler
 from utils import SignReader
-
+import regularization
 
 ALLOWED_PROJECTIONS = [
     "azimuth",
@@ -126,6 +126,8 @@ parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at 
 parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
 parser.add_argument("--bs", default=4, type=int, help="Batch size")
 # Attack specification
+parser.add_argument("--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
+parser.add_argument("--reg_w", default=0.05, type=float, help="Weight on shape regularization")
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
@@ -220,11 +222,12 @@ if __name__ == '__main__':
     else:
         parameters['rotation'] = torch.zeros((3,),requires_grad=False,device='cuda')
     if args.scaling_clamp > 0:
-        scaling_param = torch.rand((3,), requires_grad=True, device='cuda')
+        scaling_param = 0.2 * (torch.ones((3,),requires_grad=False,device='cuda') + torch.rand((3,), requires_grad=False, device='cuda'))
+        scaling_param.requires_grad_(True)
         parameters['scaling'] = scaling_param
         print("HI:)")
     else:
-        parameters['scaling'] = torch.ones((3,),requires_grad=False,device='cuda')*0.1
+        parameters['scaling'] = torch.ones((3,),requires_grad=False,device='cuda') * 0.2
     if args.adv_tex:
         parameters['texture'] = base_cube.textures
 
@@ -236,7 +239,8 @@ if __name__ == '__main__':
 
     # Render into image
     renderer = nr.Renderer(camera_mode='look_at', image_size=args.image_size)
-    renderer2 = nr.Renderer(camera_mode='look_at', image_size=3*args.image_size)
+    renderer2 = nr.Renderer(camera_mode='look_at', image_size=6*args.image_size)
+    renderer_gif = nr.Renderer(camera_mode='look_at', image_size=6*args.image_size)
     camera_distance = 2.72-0.75  # Constant
     elevation = 0.0
     azimuth = 90.0
@@ -266,14 +270,6 @@ if __name__ == '__main__':
     loss_handler = LossHandler()
 
     for i in range(args.max_iterations):
-        if args.scaling_clamp>0.0:
-            parameters['scaling'].data.clamp_(0, args.scaling_clamp)
-        if args.translation_clamp>0.0:
-            parameters['translation'].data.clamp_(-args.translation_clamp, args.translation_clamp)
-        if args.rotation_clamp>0.0:
-            parameters['rotation'].data.clamp_(-args.rotation_clamp, args.rotation_clamp)
-        if args.adv_tex:
-            parameters['texture'].data.clamp_(-0.9, 0.9)
         # TODO: Consider batching by parallelizing over renderers.
         # Sample a projection
         # Create image
@@ -315,8 +311,14 @@ if __name__ == '__main__':
         vft[1] = vft[1].expand(args.bs, *(vft[1].shape[1:]))
         vft[2] = vft[2].expand(args.bs, *(vft[2].shape[1:]))
 
+        # Shape regularization
+        if args.reg is '':
+            loss = 0.0
+        else:
+            loss = sum(args.reg_w * regularization.function_lookup[reg](cube_vft[0], cube_vft[1]) for reg in args.reg)
+
         image = renderer(*vft)  # [bs, 3, is, is]
-        if i%10 ==0:
+        if i % (args.max_iterations//10) ==0:
             # pdb.set_trace()
             for bi in range(1):
                 imsave(
@@ -329,14 +331,22 @@ if __name__ == '__main__':
         y = victim(image)
 
         # Construct Loss
-        loss = y[:,ytrue_label].mean()
+        loss += y[:,ytrue_label].mean()
 
-        if args.target_class>-1:
-            loss += -y[:,args.target_class].mean()
+        if args.target_class > -1:
+            loss += -y[:, args.target_class].mean()
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if args.scaling_clamp>0.0:
+            parameters['scaling'].data.clamp_(0, args.scaling_clamp)
+        if args.translation_clamp>0.0:
+            parameters['translation'].data.clamp_(-args.translation_clamp, args.translation_clamp)
+        if args.rotation_clamp>0.0:
+            parameters['rotation'].data.clamp_(-args.rotation_clamp, args.rotation_clamp)
+        if args.adv_tex:
+            parameters['texture'].data.clamp_(-0.9, 0.9)
 
 
         # Print out the loss
@@ -345,23 +355,23 @@ if __name__ == '__main__':
 
 
     # Output
-    pdb.set_trace()
     print(torch.argmax(y.detach()))
+    pdb.set_trace()
     # Count how many raw images are classified as the true_label
     correct_raw = 0
     # Count how many adversarial images are classified as the true_label
     correct_adv = 0
     # The labels of the adversarial image from different azimuths when the detection is succesful
     adv_labels = []
-    loop = range(90-args.validation_range, 90+args.validation_range, 1)
+    loop = range(90 - args.validation_range, 90 + args.validation_range, 1)
     # loop = tqdm.tqdm(range(0, 360, 4))
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
     writer2 = imageio.get_writer(os.path.join(output_dir, "final_cube_" + args.output_filename + '.gif'), mode='I')
+    writer3 = imageio.get_writer(os.path.join(output_dir, "hq_final_cube_" + args.output_filename + '.gif'), mode='I')
     for num, azimuth in enumerate(loop):
-        # pdb.set_trace()
-        # loop.set_description('Drawing')
         # projection, parameters
         renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
+        renderer_gif.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
         renderer2.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth*180.0/args.validation_range)
         # Create image
         cube_vft = (base_cube.render_parameters(
@@ -377,16 +387,20 @@ if __name__ == '__main__':
         cube_image = renderer2(*cube_vft)
         raw_image = renderer(*obj_vft)
         adv_image = renderer(*vft)
+        adv_image_big = renderer_gif(*vft)
         adv_image = adv_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
+        adv_image_big = adv_image_big.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
         raw_image = raw_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
         cube_image = cube_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
 
 
         adv_image_ = adv_image.detach().cpu().numpy()
+        adv_image_big_ = adv_image_big.detach().cpu().numpy()
         cube_image_ = cube_image.detach().cpu().numpy()
         # image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))  # [image_size, image_size, RGB]
         writer.append_data((255*adv_image_).astype(np.uint8))
         writer2.append_data((255*cube_image_).astype(np.uint8))
+        writer3.append_data((255*adv_image_big_).astype(np.uint8))
 
         # Validation
         adv_image = adv_image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
