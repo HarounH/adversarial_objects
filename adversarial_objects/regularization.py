@@ -96,3 +96,23 @@ function_lookup = {
     'aabb_volume': aabb_volume,
     'radius_volume': radius_volume,
 }
+
+
+# Contains all black and others
+DEFAULT_PRINTABLE_PIXELS = [torch.zeros((1, 3, 1, 1), dtype=torch.float)] + [torch.tensor(x, dtype=torch.float).unsqueeze(0).unsqueeze(2).unsqueeze(3) for x in itertools.combinations_with_replacement([0.1, 0.5, 0.9], 3]
+
+
+def nps(image, printable_pixels=DEFAULT_PRINTABLE_PIXELS):
+    # image: [bs, 3, h, w] tensor
+    val = None
+    for phat_ in printable_pixels:
+        if not(str(image.device) == 'cpu'):
+            phat = phat_.cuda()  # Optimize and do it only once
+        else:
+            phat = phat_
+
+        if val is None:
+            val = (image - phat).abs()
+        else:
+            val = val * (image - phat).abs()
+    return val.mean()
