@@ -126,6 +126,7 @@ parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at 
 parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
 parser.add_argument("--bs", default=4, type=int, help="Batch size")
 # Attack specification
+parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # noqa
 parser.add_argument("--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
 parser.add_argument("--reg_w", default=0.05, type=float, help="Weight on shape regularization")
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
@@ -149,6 +150,10 @@ data_dir = os.path.join(current_dir, args.data_dir)
 output_dir = os.path.join(current_dir, args.output_dir)
 tensorboard_dir = os.path.join(current_dir, args.tensorboard_dir)
 
+try:
+    os.makedirs([output_dir, tensorboard_dir])
+except:
+    pass
 
 np.random.seed(args.seed)
 torch.backends.cudnn.deterministic = True
@@ -156,7 +161,7 @@ torch.manual_seed(args.seed)
 torch.cuda.manual_seed_all(args.seed)
 
 
-def combine_objects(vs,fs,ts):
+def combine_objects(vs, fs, ts):
     n = len(vs)
     v = vs[0]
     f = fs[0]
@@ -317,7 +322,12 @@ if __name__ == '__main__':
         else:
             loss = sum(args.reg_w * regularization.function_lookup[reg](cube_vft[0], cube_vft[1]) for reg in args.reg)
 
+
         image = renderer(*vft)  # [bs, 3, is, is]
+
+        if args.nps:
+            loss += regularization.nps(image)
+
         if i % (args.max_iterations//10) ==0:
             # pdb.set_trace()
             for bi in range(1):
