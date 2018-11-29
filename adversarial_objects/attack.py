@@ -30,59 +30,10 @@ import neural_renderer as nr
 from draw import (
     Background,
 )
+from object import Object, combine_objects
 
-class Object(nn.Module):
-    def __init__(self, obj_filename, texture_wrapping='REPEAT', use_bilinear=True, adversarial_affine=False, adversarial_textures=False, adversarial_object = False):
-        super(Object, self).__init__()
-        assert torch.cuda.is_available()
-        vertices, faces, textures = nr.load_obj(
-            obj_filename,
-            load_texture=True,
-            texture_size=2,
-            texture_wrapping=texture_wrapping,
-            use_bilinear=use_bilinear,
-            normalization=False,
-        )
-        self.adversarial_object = adversarial_object
-        self.vertices = vertices[None, :, :].cuda()
-        self.faces = faces[None, :, :].cuda()
-
-        if adversarial_object:
-            self.vertices_constants = self.vertices[:,4:,:]+torch.tensor([1.02,0,0],device="cuda")
-            self.vertices_vars = nn.Parameter(self.vertices[:,0:4,:]+torch.tensor([1.02,0,0],device="cuda"),requires_grad=True)
-            self.vertices = torch.cat([self.vertices_constants,self.vertices_vars],dim=1)
-        # if adversarial_object and adversarial_affine:
-        #     self.adversarial_affine_transform = nn.Parameter(0.1 * torch.eye(4).float() + 0.005 * torch.randn((4, 4)).float())
-        #     self.adversarial_affine_transform[0, 3] = 0.5
-        #     self.adversarial_affine_transform[1, 3] = 0.5
-        if adversarial_object and adversarial_textures:
-            self.textures = nn.Parameter(textures.unsqueeze(0)).cuda()
-        else:
-            self.textures = textures.unsqueeze(0).cuda()
-        self.cuda()
-
-    def render_parameters(self, affine_transform=None):
-        vertices, faces, textures = self.vertices, self.faces, self.textures
-        if self.adversarial_object:
-            vertices = torch.cat([self.vertices_constants,self.vertices_vars],dim=1)
-        if affine_transform is not None:
-            # vertices are bs, nv, 3
-            bs = vertices.shape[0]
-            affine_transform = affine_transform.unsqueeze(0).expand([bs] + list(affine_transform.shape)).cuda()
-            ones = torch.ones((list(vertices.shape[:-1]) + [1])).float().cuda()
-            vertices = torch.cat((vertices, ones), dim=2)
-            vertices = torch.bmm(vertices, affine_transform)[:, :, :3]
-        elif hasattr(self, 'adversarial_affine_transform'):
-            bs = vertices.shape[0]
-            affine_transform = self.adversarial_affine_transform.unsqueeze(0).expand([bs, 4, 4]).cuda()
-            ones = torch.ones((list(vertices.shape[:-1]) + [1])).float().cuda()
-            vertices = torch.cat((vertices, ones), dim=2)
-            vertices = torch.bmm(vertices, affine_transform)[:, :, :3]
-        else:
-            vertices = self.vertices
-        faces = self.faces
-        textures = self.textures
-        return [vertices.cuda(), faces.cuda(), textures.cuda()]
+raise DeprecationWarning("THIS FILE IS DEPRECAtED")
+exit(1)
 
 def combine_images_in_order(image_list, args):
     result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
@@ -91,7 +42,6 @@ def combine_images_in_order(image_list, args):
         result = result * selector + image
     result = (result - result.min()) / (result.max() - result.min())
     return result
-
 
 from victim_0.network import get_victim
 from tensorboardX import SummaryWriter
@@ -205,14 +155,18 @@ if __name__ == '__main__':
     # Load stop-sign
     stop_sign = Object(
         os.path.join(data_dir, args.base_object),
+        texture_size=args.ts,
+        adv_ver=False,
+        adv_tex=False,
     )
     stop_sign_translation = torch.tensor([0.0, -1.5, 0.0]).cuda()
     stop_sign.vertices += stop_sign_translation
     # Create adversary
     base_cube = Object(
         os.path.join(data_dir, args.evil_cube_path),
-        adversarial_textures=args.adv_tex,
-        adversarial_object=True,
+        texture_size=args.ts,
+        adv_tex=args.adv_tex,
+        adv_ver=args.adv_ver,
     )
     parameters = {}
     parameters['vertices']=base_cube.vertices_vars
