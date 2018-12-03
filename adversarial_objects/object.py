@@ -41,7 +41,6 @@ class Object(nn.Module):
             use_bilinear=True,
             normalization=False,
         )
-        self.adversarial_object = adversarial_object
 
         # Case 1: Textures are parameters
         if adv_tex:
@@ -51,18 +50,19 @@ class Object(nn.Module):
 
         # Case 2: Vertices are parameters
         if adv_ver:
+            self.vertices = vertices
             xvals, self.const_inds = self.vertices[:, 0].topk(3, largest=False)  # nv, 3
             _, self.var_inds = self.vertices[:, 0].topk(self.vertices.shape[0] - 3, largest=True)  # nv, 3
             var_inds = self.var_inds
             const_inds = self.const_inds
 
-            self.vertices = self.vertices - torch.tensor([xvals[0], 0.0, 0.0])
-            self.vertices[const_inds[1]] -= torch.tensor([xvals[1] - xvals[0], 0.0, 0.0])
-            self.vertices[const_inds[2]] -= torch.tensor([xvals[2] - xvals[0], 0.0, 0.0])
-            self.vertices += torch.tensor([0.02, 0.0, 0.0])
+            self.vertices = self.vertices - torch.tensor([xvals[0], 0.0, 0.0],device = 'cuda')
+            self.vertices[const_inds[1]] -= torch.tensor([xvals[1] - xvals[0], 0.0, 0.0],device = 'cuda')
+            self.vertices[const_inds[2]] -= torch.tensor([xvals[2] - xvals[0], 0.0, 0.0],device = 'cuda')
+            self.vertices += torch.tensor([0.02, 0.0, 0.0],device = 'cuda')
             self.vertices_constants = self.vertices[const_inds, :]
             self.vertices_vars = nn.Parameter(self.vertices[var_inds, :])
-            self.vertices = torch.zeros(self.vertices.shape, dtype=torch.float)
+            self.vertices = torch.zeros(self.vertices.shape, dtype=torch.float, device='cuda')
             self.vertices[const_inds] = self.vertices_constants
             self.vertices[var_inds] = self.vertices_vars
 
@@ -70,12 +70,12 @@ class Object(nn.Module):
         self.faces = faces[None, :, :].cuda()
         self.cuda()
 
-    def render_parameters(self):
+    def render_parameters(self,affine_transform=None):
         vertices, faces, textures = self.vertices, self.faces, self.textures
         if self.adv_ver:
-            vertices = torch.zeros(self.vertices.shape, dtype=torch.float)
-            vertices[:, const_inds] = self.vertices_constants
-            vertices[:, var_inds] = self.vertices_vars
+            vertices = torch.zeros(self.vertices.shape, dtype=torch.float, device='cuda')
+            vertices[:, self.const_inds] = self.vertices_constants
+            vertices[:, self.var_inds] = self.vertices_vars
         if affine_transform is not None:
             # vertices are bs, nv, 3
             bs = vertices.shape[0]

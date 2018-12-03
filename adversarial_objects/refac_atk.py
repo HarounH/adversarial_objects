@@ -67,10 +67,12 @@ parser.add_argument("-iter", "--max_iterations", type=int, default=100, help="Nu
 parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at which to do steps.")
 parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
 parser.add_argument("--bs", default=4, type=int, help="Batch size")
+parser.add_argument("--nobj", default=1, type=int, help="Batch size")
 # Attack specification
 parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # noqa
 parser.add_argument("--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
 parser.add_argument("--reg_w", default=0.05, type=float, help="Weight on shape regularization")
+parser.add_argument("--scale0", default=0.05, type=float, help="Weight on shape regularization")
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
@@ -136,7 +138,7 @@ def create_affine_transform(scaling, translation, rotation):
     rotation_z[0, 0] = rotation_z[1, 1] = torch.cos(rotation[2])
     rotation_z[0, 1] = torch.sin(rotation[2])
     rotation_z[1, 0] = -rotation_z[0, 1]
-    return rotation_x.mm(rotation_y.mm(rotation_z.mm(translation_matrix.mm(scaling_matrix))))
+    return scaling_matrix.mm(rotation_y.mm(rotation_z.mm(rotation_x.mm(translation_matrix))))
 
 if __name__ == '__main__':
     # Load signnames
@@ -163,11 +165,11 @@ if __name__ == '__main__':
             adv_tex=args.adv_tex,
             adv_ver=args.adv_ver,
         )
-        adv_obj.vertices += torch.tensor([0.0, 1.0 * np.cos(2 * np.pi * k / args.nobj), 1.0 * np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
         adv_objs[k] = adv_obj
-        parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
+        if args.adv_ver:
+            parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
         if args.translation_clamp > 0:
-            translation_param = torch.tensor([0,0.2,0.2],device="cuda")*torch.randn((3,), device='cuda')
+            translation_param = torch.tensor([0,0.02,0.02],device="cuda")*torch.randn((3,), device='cuda') + torch.tensor([0.02,  np.cos(2 * np.pi * k / args.nobj), np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
             translation_param.requires_grad_(True)
             parameters['translation{}'.format(k)] = translation_param
         if args.rotation_clamp > 0:
@@ -177,11 +179,11 @@ if __name__ == '__main__':
         else:
             parameters['rotation{}'.format(k)] = torch.zeros((3,),requires_grad=False,device='cuda')
         if args.scaling_clamp > 0:
-            scaling_param = 0.2 * (torch.ones((3,),requires_grad=False,device='cuda') + torch.rand((3,), requires_grad=False, device='cuda'))
+            scaling_param = args.scale0 * (torch.ones((3,),requires_grad=False,device='cuda') + torch.rand((3,), requires_grad=False, device='cuda'))
             scaling_param.requires_grad_(True)
             parameters['scaling{}'.format(k)] = scaling_param
         else:
-            parameters['scaling{}'.format(k)] = torch.ones((3,),requires_grad=False,device='cuda') * 0.2
+            parameters['scaling{}'.format(k)] = torch.ones((3,),requires_grad=False,device='cuda') * args.scale0
         if args.adv_tex:
             parameters['texture{}'.format(k)] = adv_obj.textures
 
@@ -236,6 +238,7 @@ if __name__ == '__main__':
                 parameters['translation{}'.format(k)],
                 parameters['rotation{}'.format(k)],
             )) for k, adv_obj in adv_objs.items()]
+        # pdb.set_trace()
 
         vft = combine_objects(
             [obj_vft[0]] + [adv_vft[0] for adv_vft in adv_vfts],
@@ -292,13 +295,13 @@ if __name__ == '__main__':
 
         # Run victim on created image.
 
-        y = victim(image)
+        y = (F.softmax(victim(image),dim=1))
 
         # Construct Loss
         loss += y[:,ytrue_label].mean()
 
         if args.target_class > -1:
-            loss += -y[:, args.target_class].mean()
+            loss += (y[:,:args.target_class-1].mean(0).sum()+y[:,args.target_class+1:].mean(0).sum()-10*y[:, args.target_class].mean(0).sum())
 
         optimizer.zero_grad()
         loss.backward()
@@ -306,15 +309,17 @@ if __name__ == '__main__':
         if args.scaling_clamp>0.0:
             [parameters['scaling{}'.format(k)].data.clamp_(0.01, args.scaling_clamp) for k in range(args.nobj)]
         if args.translation_clamp>0.0:
-            [parameters['translation{}'.format(k)].data.clamp_(0.00001, args.translation_clamp) for k in range(args.nobj)]
+            [parameters['translation{}'.format(k)].data.clamp_(- args.translation_clamp, args.translation_clamp) for k in range(args.nobj)]
         if args.rotation_clamp>0.0:
             [parameters['rotation{}'.format(k)].data.clamp_(-args.rotation_clamp, args.rotation_clamp) for k in range(args.nobj)]
         if args.adv_tex:
             [parameters['texture{}'.format(k)].data.clamp_(-0.9, 0.9) for k in range(args.nobj)]
 
         # Print out the loss
-        loss_handler['loss'][i].append(loss.item())
-        loss_handler.log_epoch(writer, i)
+        if i%1000==0:
+            loss_handler['loss'][i].append(loss.item())
+            loss_handler['target_probability'][i].append(y[:, args.target_class].mean(0).sum().detach().cpu().numpy())
+            loss_handler.log_epoch(writer, i)
 
     ###############################################
     ###############################################
@@ -325,13 +330,14 @@ if __name__ == '__main__':
     ###############################################
     ###############################################
     ###############################################
-
     # Output
     print(torch.argmax(y.detach()))
     # Count how many raw images are classified as the true_label
     correct_raw = 0
     # Count how many adversarial images are classified as the true_label
     correct_adv = 0
+    # Count how many adversarial images are classified as the target_label
+    correct_target = 0
     # The labels of the adversarial image from different azimuths when the detection is succesful
     adv_labels = []
     loop = range(90 - args.validation_range, 90 + args.validation_range, 1)
@@ -398,6 +404,8 @@ if __name__ == '__main__':
             adv_labels.append(y_adv_label)
         if y_raw_label == ytrue_label and y_adv_label==ytrue_label:
             correct_adv += 1
+        if args.target_class > -1 and y_raw_label == ytrue_label and y_adv_label==args.target_class:
+            correct_target += 1
     writer.close()
     writer2.close()
     print("Raw accuracy: {}/{} Attack accuracy: {}/{}".format(correct_raw,len(loop),correct_raw-correct_adv,correct_raw))
@@ -407,3 +415,11 @@ if __name__ == '__main__':
         signnames[most_frequent_attack_label],
         adv_labels.count(most_frequent_attack_label),
         len(adv_labels)))
+
+    if args.target_class > -1:
+        print("Target attack on {}: {}, {} out of {} times ".format(
+            args.target_class,
+            signnames[args.target_class],
+            correct_target,
+            len(adv_labels)))
+    # pdb.set_trace()
