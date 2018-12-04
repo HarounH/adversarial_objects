@@ -17,14 +17,14 @@ from torchvision import transforms
 
 
 class Background(nn.Module):
-    def __init__(self, filepath, args):
+    def __init__(self, filepath, image_size):
         super(Background, self).__init__()
         self.image = PIL.Image.open(filepath)
-        self.image_size = args.image_size
+        self.image_size = image_size
 
     def render_image(self):
         transform = transforms.Compose([
-            transforms.CenterCrop((self.image_size, self.image_size)),
+            transforms.RandomCrop((self.image_size, self.image_size)),
             transforms.ToTensor(),
         ])
         data = np.transpose(transform(self.image), [1, 2, 0]).detach().numpy()
@@ -80,9 +80,9 @@ class Object(nn.Module):
 def combine_images_in_order(image_list, args):
     result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
     for image in image_list:
+        image = (image - image.min()) / (image.max() - image.min())
         selector = (torch.abs(image).sum(dim=2, keepdim=True) == 0).float()
         result = result * selector + image
-    result = (result - result.min()) / (result.max() - result.min())
     return result
 
 

@@ -144,8 +144,8 @@ if __name__ == '__main__':
     # Load signnames
     signnames = SignReader(args.signnames_path)
     # Load background
-    background = Background(os.path.join(data_dir, args.background), args)
-    bg_img = background.render_image().cuda()
+    background = Background(os.path.join(data_dir, args.background), args.image_size)
+    background_big = Background(os.path.join(data_dir, args.background), 6*args.image_size)
     # Load stop-sign
     stop_sign = Object(
         os.path.join(data_dir, args.base_object),
@@ -206,6 +206,7 @@ if __name__ == '__main__':
     obj_image = renderer(*(stop_sign.render_parameters())) # [1, RGB, is, is]
     obj_image = obj_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
 
+    bg_img = background.render_image().cuda()
     image = combine_images_in_order([bg_img, obj_image], args) # [is, is, RGB]
     imsave(os.path.join(output_dir, "safe." + args.output_filename), image.detach().cpu().numpy())
     image = image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
@@ -231,6 +232,7 @@ if __name__ == '__main__':
         # Sample a projection
         # Create image
         obj_vft = stop_sign.render_parameters()
+
 
         adv_vfts = [adv_obj.render_parameters(
             affine_transform=create_affine_transform(
@@ -281,7 +283,10 @@ if __name__ == '__main__':
                 loss += sum(args.reg_w * regularization.function_lookup[reg](adv_vft[0], adv_vft[1]) for reg in args.reg)
 
         image = renderer(*vft)  # [bs, 3, is, is]
-
+        image = image.squeeze().permute(0, 2, 3, 1)  # [image_size, image_size, RGB]
+        bg_img = background.render_image().cuda()
+        image = combine_images_in_order([bg_img, image], args)
+        image = image.permute(0, 3, 1, 2) # [1, RGB, is, is]
         if args.nps:
             loss += regularization.nps(image)
 
@@ -316,7 +321,7 @@ if __name__ == '__main__':
             [parameters['texture{}'.format(k)].data.clamp_(-0.9, 0.9) for k in range(args.nobj)]
 
         # Print out the loss
-        if i%1000==0:
+        if i%10==0:
             loss_handler['loss'][i].append(loss.item())
             loss_handler['target_probability'][i].append(y[:, args.target_class].mean(0).sum().detach().cpu().numpy())
             loss_handler.log_epoch(writer, i)
@@ -345,6 +350,10 @@ if __name__ == '__main__':
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
     writer2 = imageio.get_writer(os.path.join(output_dir, "final_cube_" + args.output_filename + '.gif'), mode='I')
     writer3 = imageio.get_writer(os.path.join(output_dir, "hq_final_cube_" + args.output_filename + '.gif'), mode='I')
+
+
+    bg_img = background.render_image().cuda()
+    bg_img_big = background_big.render_image().cuda()
     for num, azimuth in enumerate(loop):
         # projection, parameters
         renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
@@ -382,9 +391,14 @@ if __name__ == '__main__':
         cube_image = cube_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
 
 
+        adv_image = combine_images_in_order([bg_img, adv_image], args)
+        adv_image_big = combine_images_in_order([bg_img_big, adv_image_big], args)
+
         adv_image_ = adv_image.detach().cpu().numpy()
         adv_image_big_ = adv_image_big.detach().cpu().numpy()
         cube_image_ = cube_image.detach().cpu().numpy()
+
+
         # image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))  # [image_size, image_size, RGB]
         writer.append_data((255*adv_image_).astype(np.uint8))
         writer2.append_data((255*cube_image_).astype(np.uint8))
