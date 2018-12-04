@@ -28,7 +28,7 @@ class Background(nn.Module):
             transforms.ToTensor(),
         ])
         data = np.transpose(transform(self.image), [1, 2, 0]).detach().numpy()
-        return torch.tensor((data - data.min()) / (data.max() - data.min()))
+        return torch.tensor((data - data.min()) / (data.max() - data.min()), device='cuda')
 
 
 class Object(nn.Module):

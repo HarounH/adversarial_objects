@@ -1,6 +1,9 @@
 examples/data/stop_sign/*
 output/*
 adversarial_objects/output
+yolo_v3/output/*
+yolo_v3/data/*
+yolo_v3/weights/*.weights
 .DS_Store
 # Byte-compiled / optimized / DLL files
 __pycache__/
