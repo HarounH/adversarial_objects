@@ -38,8 +38,8 @@ from utils import SignReader
 import regularization
 
 
-import yolo_v3.models as yolo_models
-import yolo_v3.utils.utils as yolo_utils
+from yolo_v3.models import *
+from yolo_v3.utils.utils import *
 
 def combine_images_in_order(image_list):
     result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
@@ -170,12 +170,68 @@ if __name__ == '__main__':
     obj_image = obj_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
 
     image = combine_images_in_order([bg_img, obj_image]) # [is, is, RGB]
-    imsave(os.path.join(output_dir, "noatk.png"), image.detach().cpu().numpy())
 
     image = image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
+
+
 
     # Set up model Check if it detects well.
     model = Darknet("yolo_v3/config/yolov3.cfg", img_size=args.image_size)
     model.load_weights("yolo_v3/weights/yolov3.weights")
-    model = model.cuda()
+    model = model.cuda()  # Always on CUDA
+    classes = load_classes('yolo_v3/data/coco.names') # Extracts class labels from file
+    # Bounding-box colors
+    cmap = plt.get_cmap('tab20b')
+    colors = [cmap(i) for i in np.linspace(0, 1, 20)]
+
+
+    with torch.no_grad():
+        detections = model(image)
+        detections = non_max_suppression(detections, 80, 0.8, 0.4)
+
+    # Create plot
+    img = np.array(Image.open(path))
+    plt.figure()
+    fig, ax = plt.subplots(1)
+    ax.imshow(img)
+
+    # The amount of padding that was added
+    pad_x = max(img.shape[0] - img.shape[1], 0) * (opt.img_size / max(img.shape))
+    pad_y = max(img.shape[1] - img.shape[0], 0) * (opt.img_size / max(img.shape))
+    # Image height and width after padding is removed
+    unpad_h = opt.img_size - pad_y
+    unpad_w = opt.img_size - pad_x
+
+    # Draw bounding boxes and labels of detections
+    if detections is not None:
+        unique_labels = detections[:, -1].cpu().unique()
+        n_cls_preds = len(unique_labels)
+        bbox_colors = random.sample(colors, n_cls_preds)
+        for x1, y1, x2, y2, conf, cls_conf, cls_pred in detections:
+
+            print ('\t+ Label: %s, Conf: %.5f' % (classes[int(cls_pred)], cls_conf.item()))
+
+            # Rescale coordinates to original dimensions
+            box_h = ((y2 - y1) / unpad_h) * img.shape[0]
+            box_w = ((x2 - x1) / unpad_w) * img.shape[1]
+            y1 = ((y1 - pad_y // 2) / unpad_h) * img.shape[0]
+            x1 = ((x1 - pad_x // 2) / unpad_w) * img.shape[1]
+
+            color = bbox_colors[int(np.where(unique_labels == int(cls_pred))[0])]
+            # Create a Rectangle patch
+            bbox = patches.Rectangle((x1, y1), box_w, box_h, linewidth=2,
+                                    edgecolor=color,
+                                    facecolor='none')
+            # Add the bbox to the plot
+            ax.add_patch(bbox)
+            # Add label
+            plt.text(x1, y1, s=classes[int(cls_pred)], color='white', verticalalignment='top',
+                    bbox={'color': color, 'pad': 0})
+
+    # Save generated image with detections
+    plt.axis('off')
+    plt.gca().xaxis.set_major_locator(NullLocator())
+    plt.gca().yaxis.set_major_locator(NullLocator())
+    plt.savefig(os.path.join(output_dir, "noatk.png"), bbox_inches='tight', pad_inches=0.0)
+    plt.close()
     pdb.set_trace()
