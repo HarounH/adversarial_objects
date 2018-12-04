@@ -124,7 +124,7 @@ def create_affine_transform(scaling, translation, rotation):
     for i in range(3):
         scaling_matrix[i, i] = scaling[i]
     translation_matrix = torch.eye(4)
-    for i in range(1,3):
+    for i in range(1, 3):
         translation_matrix[3, i] = translation[i]
     rotation_x = torch.eye(4)
     rotation_x[1, 1] = rotation_x[2, 2] = torch.cos(rotation[0])
