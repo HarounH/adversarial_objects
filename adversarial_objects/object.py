@@ -26,6 +26,21 @@ import pdb
 import neural_renderer as nr
 
 
+class Background(nn.Module):
+    def __init__(self, filepath, args):
+        super(Background, self).__init__()
+        self.image = PIL.Image.open(filepath)
+        self.image_size = args.image_size
+
+    def render_image(self, rotation_fn=lambda x: x):
+        transform = transforms.Compose([
+            transforms.Resize((self.image_size, self.image_size)),
+            transforms.ToTensor(),
+        ])
+        data = np.transpose(transform(rotation_fn(self.image)), [1, 2, 0]).detach().numpy()
+        return torch.tensor((data - data.min()) / (data.max() - data.min()), device='cuda')
+
+
 class Object(nn.Module):
     def __init__(self, obj_filename, texture_size=2, adv_ver=False, adv_tex=False):
         super(Object, self).__init__()
