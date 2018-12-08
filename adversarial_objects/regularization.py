@@ -50,6 +50,46 @@ def fna(vertices, faces):
                 val += (fi_n * fi_j).sum()
     return val / faces.shape[0]
 
+def fna_ad(vertices, faces, vertices_base):
+    """
+    Face adjacency is fixed asper evil_cube_1.obj
+[(0, 1), (0, 5), (0, 7), (1, 0), (1, 9), (1, 10), (2, 3), (2, 8), (2, 11), (3, 2), (3, 4), (3, 6), (4, 3), (4, 5), (4, 10), (5, 0), (5, 4), (5, 6), (6, 3), (6, 5), (6, 7), (7, 0), (7, 6), (7, 8), (8, 2), (8, 7), (8, 9), (9, 1), (9, 8), (9, 11), (10, 1), (10, 4), (10, 11), (11, 2), (11, 9), (11, 10)]
+    """
+    val = 0.0
+    
+    for bidx in range(faces.shape[0]):
+        temp_f = faces[bidx, :, :].long()
+        temp_v = vertices[bidx, :, :]
+        temp_v_base = vertices_base[bidx, :, :]
+        v = []
+        v_base = []
+        for i in range(faces.shape[2]):
+            v.append(F.embedding(temp_f[:, i], temp_v))
+            v_base.append(F.embedding(temp_f[:, i], temp_v_base))
+        n = torch.cross(v[1] - v[0], v[2] - v[0], 1)
+        n_base = torch.cross(v_base[1] - v_base[0], v_base[2] - v_base[0], 1)
+        # pdb.set_trace()
+        val+=(n-n_base).norm(2)
+    return val / faces.shape[0]
+
+def edge_length(vertices, faces):
+    """
+    args,
+        vertices: bs, nv, 3
+    return
+        val: scalar
+    """
+    length = 0.0
+    for bidx in range(faces.shape[0]):
+        temp_f = faces[bidx, :, :].long()
+        temp_v = vertices[bidx, :, :]
+        v = []
+        for i in range(faces.shape[2]):
+            v.append(F.embedding(temp_f[:, i], temp_v))
+        length += (v[1] - v[0]).norm(2)
+        length += (v[2] - v[0]).norm(2)
+        length += (v[1] - v[2]).norm(2)
+    return length / (3*faces.shape[0])
 
 def surface_area(vertices, faces):
     """
@@ -95,6 +135,7 @@ function_lookup = {
     'surface_area': surface_area,
     'aabb_volume': aabb_volume,
     'radius_volume': radius_volume,
+    'edge_length': edge_length,
 }
 
 
