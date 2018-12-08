@@ -48,12 +48,12 @@ class Background(nn.Module):
 
 
 class Object(nn.Module):
-    def __init__(self, obj_filename, texture_size=2, adv_ver=False, adv_tex=False):
+    def __init__(self, obj_filename, texture_size=2, adv_ver=False, adv_tex=False, rng_tex=False):
         super(Object, self).__init__()
         assert torch.cuda.is_available()
         self.adv_ver = adv_ver
         self.adv_tex = adv_tex
-
+        self.rng_tex = rng_tex
         vertices, faces, textures = nr.load_obj(
             obj_filename,
             load_texture=True,
@@ -62,7 +62,8 @@ class Object(nn.Module):
             use_bilinear=True,
             normalization=False,
         )
-
+        if rng_tex:
+            textures = 0.1 + 0.8 * torch.rand_like(textures, device='cuda')
         # Case 1: Textures are parameters
         if adv_tex:
             self.textures = nn.Parameter(textures.unsqueeze(0)).cuda()
