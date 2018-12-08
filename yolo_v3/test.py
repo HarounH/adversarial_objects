@@ -70,7 +70,7 @@ for batch_i, (_, imgs, targets) in enumerate(tqdm.tqdm(dataloader, desc="Detecti
         outputs = non_max_suppression(outputs, 80, conf_thres=opt.conf_thres, nms_thres=opt.nms_thres)
 
     for output, annotations in zip(outputs, targets):
-
+        pdb.set_trace()
         all_detections.append([np.array([]) for _ in range(num_classes)])
         if output is not None:
             # Get predicted boxes, confidence scores and labels

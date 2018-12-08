@@ -9,7 +9,7 @@ import numpy as np
 import scipy
 import random
 from random import shuffle
-from time import time
+import time
 import sys
 import pdb
 import pickle as pk
@@ -50,7 +50,8 @@ import regularization
 
 from yolo_v3.models import *
 from yolo_v3.utils.utils import *
-
+YOLO_NUM_CLASSES = 80
+YOLO_MAX_OBJECTS = 50
 
 ###########################
 ### parser
@@ -65,6 +66,7 @@ parser.add_argument("--image_size", default=416, type=int, help="Square Image si
 parser.add_argument("--data_dir", type=str, default='data', help="Location where data is present")
 parser.add_argument("--tensorboard_dir", dest="tensorboard_dir", type=str, default="tensorboard", help="Subdirectory to save logs using tensorboard")  # noqa
 parser.add_argument("--output_dir", type=str, default='output/yolo', help="Location where data is present")
+parser.add_argument("-o", "--output", dest="output_filename", type=str, default="ywdo", help="Filename for output GIF")
 
 parser.add_argument("-bg", "--background", dest="background", type=str, default="highway1.jpg", help="Path to background file (image)")
 parser.add_argument("-bo", "--base_object", dest="base_object", type=str, default="custom_stop_sign.obj", help="Name of .obj file containing stop sign")
@@ -80,17 +82,19 @@ parser.add_argument("--nobj", default=1, type=int, help="Number of objects to at
 parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # noqa
 parser.add_argument("--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
 parser.add_argument("--reg_w", default=0.05, type=float, help="Weight on shape regularization")
-parser.add_argument("--scale0", default=0.05, type=float, help="Weight on shape regularization")
+parser.add_argument("--scale0", default=0.2, type=float, help="Weight on shape regularization")
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
 parser.add_argument("--adv_tex", action="store_true", default=False, help="Attack using texture too?")
 parser.add_argument("--adv_ver", action="store_true", default=False, help="Attack using vertices too?")
 parser.add_argument("--ts", dest="ts", default=2, help="Textre suze")
-parser.add_argument("--target_class", default=-1, type=int, help="Class of the target that you want the object to be classified as. Negative if not using a targeted attack")
+parser.add_argument("--correct_class", default=11, type=int, help="Which class we want to avoid")
+parser.add_argument("-tc", "--target_class", default=-1, type=int, help="Class of the target that you want the object to be classified as. Negative if not using a targeted attack")
 
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
 parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
+parser.add_argument("--validation_range", default=30, type=int, help="One sided angle range over which to validate the image")
 
 args = parser.parse_args()
 
@@ -111,6 +115,75 @@ np.random.seed(args.seed)
 torch.backends.cudnn.deterministic = True
 torch.manual_seed(args.seed)
 torch.cuda.manual_seed_all(args.seed)
+
+
+def get_mAP(all_correct_detections, all_attacked_detections, attacked_class=11):
+    average_precisions = {}
+    for label in range(YOLO_NUM_CLASSES):
+        true_positives = []
+        scores = []
+        num_annotations = 0
+
+        for i in range(len(all_correct_detections)):
+            detections = all_attacked_detections[i][label]
+            annotations = all_correct_detections[i][label]
+
+            num_annotations += annotations.shape[0]
+            detected_annotations = []
+
+            for detect in detections:
+                score = detect[-1]
+                bbox = detect[:-1]
+                scores.append(score)
+
+                if annotations.shape[0] == 0:
+                    true_positives.append(0)
+                    continue
+
+                # pdb.set_trace()
+                overlaps = bbox_iou_numpy(np.expand_dims(bbox, axis=0), annotations)
+                assigned_annotation = np.argmax(overlaps, axis=1)
+                max_overlap = overlaps[0, assigned_annotation]
+
+                if max_overlap >= 0.5 and assigned_annotation not in detected_annotations:
+                    true_positives.append(1)
+                    detected_annotations.append(assigned_annotation)
+                else:
+                    true_positives.append(0)
+
+        # no annotations -> AP for this class is 0
+        if num_annotations == 0:
+            average_precisions[label] = 0
+            continue
+
+        true_positives = np.array(true_positives)
+        false_positives = np.ones_like(true_positives) - true_positives
+        # sort by score
+        indices = np.argsort(-np.array(scores))
+        false_positives = false_positives[indices]
+        true_positives = true_positives[indices]
+
+        # compute false positives and true positives
+        false_positives = np.cumsum(false_positives)
+        true_positives = np.cumsum(true_positives)
+
+        # compute recall and precision
+        recall = true_positives / num_annotations
+        precision = true_positives / np.maximum(true_positives + false_positives, np.finfo(np.float64).eps)
+
+        # compute average precision
+        average_precision = compute_ap(recall, precision)
+        average_precisions[label] = average_precision
+
+    # We dont care about this.
+    # print("Average Precisions:")
+    # for c, ap in average_precisions.items():
+    #     print(f"+ Class '{c}' - AP: {ap}")
+
+    print("AP[attacked class {}]={}".format(attacked_class, average_precisions[attacked_class]))
+    mAP = np.mean(list(average_precisions.values()))
+    print("mAP: {}".format(mAP))
+
 
 def combine_objects(vs, fs, ts):
     n = len(vs)
@@ -221,7 +294,7 @@ def prepare_adversary(args):
         if args.adv_ver:
             parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
         if args.translation_clamp > 0:
-            translation_param = torch.tensor([0,0.02,0.02],device="cuda")*torch.randn((3,), device='cuda') + torch.tensor([0.02,  np.cos(2 * np.pi * k / args.nobj), np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
+            translation_param = torch.tensor([0, 0.02, 0.02], device="cuda") * torch.randn((3,), device='cuda') + torch.tensor([0.1,  -1.5 + np.cos(2 * np.pi * k / args.nobj), 1.5 + np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
             translation_param.requires_grad_(True)
             parameters['translation{}'.format(k)] = translation_param
         if args.rotation_clamp > 0:
@@ -230,6 +303,7 @@ def prepare_adversary(args):
 
         else:
             parameters['rotation{}'.format(k)] = torch.zeros((3,),requires_grad=False,device='cuda')
+
         if args.scaling_clamp > 0:
             scaling_param = args.scale0 * (torch.ones((3,),requires_grad=False,device='cuda') + torch.rand((3,), requires_grad=False, device='cuda'))
             scaling_param.requires_grad_(True)
@@ -273,6 +347,7 @@ if __name__ == '__main__':
     # Set up model Check if it detects well.
     model = Darknet("yolo_v3/config/yolov3.cfg", img_size=args.image_size)
     model.load_weights("yolo_v3/weights/yolov3.weights")
+    model.train()
     model = model.cuda()  # Always on CUDA
     classes = load_classes('yolo_v3/data/coco.names') # Extracts class labels from file
     # Bounding-box colors
@@ -297,9 +372,8 @@ if __name__ == '__main__':
         weight_decay=args.weight_decay
     )
 
-    writer = SummaryWriter(log_dir=args.tensorboard_dir)
-    loss_handler = LossHandler()
-    for i in range(args.max_iterations):
+    for itr in range(args.max_iterations):
+        start = time.time()
         # Construct components
         obj_vft = stop_sign.render_parameters()
 
@@ -326,7 +400,7 @@ if __name__ == '__main__':
         bg_img = torch.stack(bg_imgs)
 
         # Use to make a detection without adversary
-        rotated_obj_vft = [lol.detach() for lol in obj_vft]
+        rotated_obj_vft = [torch.tensor(lol.detach(), device='cuda') for lol in obj_vft]
         rotated_obj_vft[0] = torch.bmm(
             torch.cat(
                 (
@@ -362,17 +436,39 @@ if __name__ == '__main__':
             # Construct image without adversary to get target
             rotated_obj_img = renderer(*rotated_obj_vft)
             normal_image = combine_images_in_order([bg_img, rotated_obj_img], rotated_obj_img.shape, color_dim=1)
-            correct_detections = model(normal_image)
+            correct_detections = model(normal_image).detach()
+            correct_target = non_max_suppression(correct_detections, 80, 0.8, 0.4)
 
         # Construct the image with target
         adv_img = renderer(*vft)
         attacked_image = combine_images_in_order([bg_img, adv_img], adv_img.shape, color_dim=1)
-        attacked_detections = model(attacked_image)
 
         # CONSTRUCT A LOSS!
-        pdb.set_trace()
-        raise NotImplementedError()
-        loss = 0.0
+        if args.target_class == -1:
+            attacked_detections = model(attacked_image)
+            # Don't detect the correct class at all!
+            loss = (attacked_detections[:, :, 4] * attacked_detections[:, :, (5 + args.correct_class)]).sum()
+        else:
+            # Construct a target and obtain a loss to minimize!
+            formatted_attacked_target = []
+            attack_count = 0
+            for bidx, btarget in enumerate(correct_target):
+                detached_btarget = btarget.detach()
+                # detached_btarget is a ? * 7 tensor
+                formatted_attacked_target.append(torch.zeros((YOLO_MAX_OBJECTS, 5), device='cuda'))
+                for obj_idx in range(detached_btarget.shape[0]):
+                    if abs(detached_btarget[obj_idx, -1] - args.correct_class) < 1e-4:
+                        attack_count += 1
+                        formatted_attacked_target[-1][obj_idx, 0] = args.target_class
+                    else:
+                        formatted_attacked_target[-1][obj_idx, 0] = detached_btarget[obj_idx, -1].item()
+                    formatted_attacked_target[-1][obj_idx, 1] = (detached_btarget[obj_idx, 0] + detached_btarget[obj_idx, 2]).item() / (2 * args.image_size)
+                    formatted_attacked_target[-1][obj_idx, 2] = (detached_btarget[obj_idx, 1] + detached_btarget[obj_idx, 3]).item() / (2 * args.image_size)
+                    formatted_attacked_target[-1][obj_idx, 3] = (detached_btarget[obj_idx, 0] - detached_btarget[obj_idx, 2]).abs().item() / args.image_size
+                    formatted_attacked_target[-1][obj_idx, 4] = (detached_btarget[obj_idx, 1] - detached_btarget[obj_idx, 3]).abs().item() / args.image_size
+            formatted_attacked_target = torch.stack(formatted_attacked_target)
+            # Need to transform to target representation though.
+            loss = model(attacked_image, formatted_attacked_target)
 
         # regularization
         if args.reg != '':
@@ -394,6 +490,9 @@ if __name__ == '__main__':
         if args.adv_tex:
             [parameters['texture{}'.format(k)].data.clamp_(-0.9, 0.9) for k in range(args.nobj)]
 
+        print("[{}/{}:{:.2f}s] loss={} {}".format(itr, args.max_iterations, time.time() - start, loss.item(), "attack_count={}/batch_size={}".format(attack_count, args.bs) if args.target_class > 0 else ""))
+
+    print("DONE TRAINING!")
     ###############################################
     ###############################################
     ###############################################
@@ -403,4 +502,122 @@ if __name__ == '__main__':
     ###############################################
     ###############################################
     ###############################################
-    # Output
+    # TESTING
+    model.eval()
+    renderer_attacked_gif = nr.Renderer(camera_mode='look_at', image_size=args.image_size)
+    renderer_attacker_gif = nr.Renderer(camera_mode='look_at', image_size=args.image_size)
+    writer_attacked = imageio.get_writer(os.path.join(output_dir, "final_attacked_" + args.output_filename + '.gif'), mode='I')
+    writer_attacker = imageio.get_writer(os.path.join(output_dir, "final_attacker_" + args.output_filename + '.gif'), mode='I')
+
+    all_correct_detections = []
+    all_attacked_detections = []  # These are used to compute some score.
+
+    loop = range(90 - args.validation_range, 90 + args.validation_range, 1)
+    actual_bs = args.bs
+    args.bs = 1
+    for num, azimuth in enumerate(loop):
+        with torch.no_grad():
+            obj_vft = stop_sign.render_parameters()
+            adv_vfts = [adv_obj.render_parameters(
+                affine_transform=create_affine_transform(
+                    parameters['scaling{}'.format(k)],
+                    parameters['translation{}'.format(k)],
+                    parameters['rotation{}'.format(k)],
+                )) for k, adv_obj in adv_objs.items()]
+            rot_matrices = torch.stack([torch.eye(4)]).cuda()
+            bg_img = background.render_image(lambda x: x, pytorch_mode=True)
+            # Use to make a detection without adversary
+            rotated_obj_vft = [torch.tensor(lol.detach(), device='cuda') for lol in obj_vft]
+            rotated_obj_vft[0] = torch.bmm(
+                torch.cat(
+                    (
+                        rotated_obj_vft[0].expand(args.bs, *(rotated_obj_vft[0].shape[1:])),
+                        torch.ones(([args.bs] + list(rotated_obj_vft[0].shape[1:-1]) + [1])).float().cuda(),
+                    ),
+                    dim=2),
+                rot_matrices,
+            )[:, :, :3]
+            rotated_obj_vft[1] = rotated_obj_vft[1].expand(args.bs, *(rotated_obj_vft[1].shape[1:]))
+            rotated_obj_vft[2] = rotated_obj_vft[2].expand(args.bs, *(rotated_obj_vft[2].shape[1:]))
+            # IMAGE
+            vft = combine_objects(
+                [obj_vft[0]] + [adv_vft[0] for adv_vft in adv_vfts],
+                [obj_vft[1]] + [adv_vft[1] for adv_vft in adv_vfts],
+                [obj_vft[2]] + [adv_vft[2] for adv_vft in adv_vfts],
+            )
+            vft[0] = torch.bmm(
+                torch.cat(
+                    (
+                        vft[0].expand(args.bs, *(vft[0].shape[1:])),
+                        torch.ones(([args.bs] + list(vft[0].shape[1:-1]) + [1])).float().cuda(),
+                    ),
+                    dim=2),
+                rot_matrices,
+            )[:, :, :3]
+            vft[1] = vft[1].expand(args.bs, *(vft[1].shape[1:]))
+            vft[2] = vft[2].expand(args.bs, *(vft[2].shape[1:]))
+
+            attacker_vft = combine_objects(
+                [adv_vft[0] for adv_vft in adv_vfts],
+                [adv_vft[1] for adv_vft in adv_vfts],
+                [adv_vft[2] for adv_vft in adv_vfts],
+            )
+            attacker_vft[0] = torch.bmm(
+                torch.cat(
+                    (
+                        attacker_vft[0].expand(args.bs, *(attacker_vft[0].shape[1:])),
+                        torch.ones(([args.bs] + list(attacker_vft[0].shape[1:-1]) + [1])).float().cuda(),
+                    ),
+                    dim=2),
+                rot_matrices,
+            )[:, :, :3]
+            attacker_vft[1] = attacker_vft[1].expand(args.bs, *(attacker_vft[1].shape[1:]))
+            attacker_vft[2] = attacker_vft[2].expand(args.bs, *(attacker_vft[2].shape[1:]))
+
+            # Construct image without adversary to get target
+            rotated_obj_img = renderer(*rotated_obj_vft)
+            normal_image = combine_images_in_order([bg_img, rotated_obj_img], rotated_obj_img.shape, color_dim=1)
+            correct_detections = model(normal_image)
+            correct_target = non_max_suppression(correct_detections, 80, 0.8, 0.4)[0]
+
+            # Construct the image with target
+            adv_img = renderer(*vft)
+            attacked_image = combine_images_in_order([bg_img, adv_img], adv_img.shape, color_dim=1)
+            attacked_detections = model(attacked_image)
+            attacked_target = non_max_suppression(attacked_detections, 80, 0.8, 0.4)[0]
+
+            if azimuth == 90:
+                save_image_with_detections(attacked_image.detach()[0].cpu().numpy().transpose(1, 2, 0), [attacked_target], "atk.png")
+
+
+            # Construct the image with ONLY the target
+            attacker_image = renderer(*attacker_vft)
+            # Write images!
+            writer_attacked.append_data((255 * (attacked_image.squeeze().permute(1, 2, 0).detach().cpu().numpy())).astype(np.uint8))
+            writer_attacker.append_data((255 * (attacker_image.squeeze().permute(1, 2, 0).detach().cpu().numpy())).astype(np.uint8))
+
+            # Save detections to all_correct_detections, all_attacked_detections
+            for is_not_annotation, (output, all_detections) in enumerate(zip([correct_target, attacked_target], [all_correct_detections, all_attacked_detections])):
+                all_detections.append([np.array([]) for _ in range(YOLO_NUM_CLASSES)])
+                if output is not None:
+                    # Get predicted boxes, confidence scores and labels
+                    pred_boxes = output[:, :5].cpu().numpy()
+                    scores = output[:, 4].cpu().numpy()
+                    pred_labels = output[:, -1].cpu().numpy()
+
+                    # Order by confidence
+                    sort_i = np.argsort(scores)
+                    pred_labels = pred_labels[sort_i]
+                    pred_boxes = pred_boxes[sort_i]
+
+                    if is_not_annotation == 0:
+                        for label in range(YOLO_NUM_CLASSES):
+                            all_detections[-1][label] = pred_boxes[pred_labels == label][..., :4]  # Don't need scores here.
+                    else:
+                        for label in range(YOLO_NUM_CLASSES):
+                            all_detections[-1][label] = pred_boxes[pred_labels == label]
+    args.bs = actual_bs
+    get_mAP(all_correct_detections, all_attacked_detections)
+
+    writer_attacked.close()
+    writer_attacker.close()
