@@ -16,6 +16,8 @@ import pickle as pk
 from collections import defaultdict
 import itertools
 # pytorch imports
+import matplotlib
+matplotlib.use('agg')
 import torch
 import torch.utils.data
 import torch.nn as nn
@@ -28,18 +30,17 @@ import tqdm
 import imageio
 from skimage.io import imread, imsave
 import pdb
-import matplotlib
-matplotlib.use('agg')
+
 import matplotlib.pyplot as plt
-plt.switch_backend('agg')
 import matplotlib.patches as patches
 from matplotlib.ticker import NullLocator
 
 import neural_renderer as nr
-from draw import (
+from object import (
     Background,
+    Object,
+    combine_objects,
 )
-from object import Object, combine_objects
 
 from tensorboardX import SummaryWriter
 from utils import LossHandler
@@ -211,7 +212,7 @@ def prepare_adversary(args):
     adv_objs = {}
     for k in range(args.nobj):
         adv_obj = Object(
-            os.path.join(data_dir, args.evil_cube_path),
+            os.path.join(data_dir, args.attacker_path),
             texture_size=args.ts,
             adv_tex=args.adv_tex,
             adv_ver=args.adv_ver,
@@ -313,8 +314,8 @@ if __name__ == '__main__':
         bg_imgs = []
         for idx in range(args.bs):
             angle = np.random.uniform(75, 105)
-            rotation_fn = lambda img: torchvision.transforms.functional.rotate(img, angle)
-            bg_imgs.append(background.render_image(rotation_fn))  # 416, 416, 3
+            rotation_fn = lambda img: img  # torchvision.transforms.functional.rotate(img, angle)
+            bg_imgs.append(background.render_image(rotation_fn, pytorch_mode=True))  # 3, 416, 416
             rotation_y = torch.eye(4)
             rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle))
             rotation_y[0, 2] = -torch.sin(torch.tensor(angle))
@@ -325,7 +326,7 @@ if __name__ == '__main__':
         bg_img = torch.stack(bg_imgs)
 
         # Use to make a detection without adversary
-        rotated_obj_vft = obj_vfts
+        rotated_obj_vft = [lol.detach() for lol in obj_vft]
         rotated_obj_vft[0] = torch.bmm(
             torch.cat(
                 (
@@ -357,7 +358,6 @@ if __name__ == '__main__':
         vft[1] = vft[1].expand(args.bs, *(vft[1].shape[1:]))
         vft[2] = vft[2].expand(args.bs, *(vft[2].shape[1:]))
 
-
         with torch.no_grad():
             # Construct image without adversary to get target
             rotated_obj_img = renderer(*rotated_obj_vft)
@@ -371,13 +371,11 @@ if __name__ == '__main__':
 
         # CONSTRUCT A LOSS!
         pdb.set_trace()
-        loss = raise NotImplementedError()
+        raise NotImplementedError()
+        loss = 0.0
 
         # regularization
-        if args.reg is '':
-            loss = 0.0
-        else:
-            loss = 0.0
+        if args.reg != '':
             for k, adv_vft in enumerate(adv_vfts):
                 loss += sum(args.reg_w * regularization.function_lookup[reg](adv_vft[0], adv_vft[1]) for reg in args.reg)
         if args.nps:
