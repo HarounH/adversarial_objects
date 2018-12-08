@@ -80,13 +80,14 @@ parser.add_argument("--bs", default=4, type=int, help="Batch size")
 # Attack specification
 parser.add_argument("--nobj", default=1, type=int, help="Number of objects to attack with")
 parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # noqa
-parser.add_argument("--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
-parser.add_argument("--reg_w", default=0.05, type=float, help="Weight on shape regularization")
-parser.add_argument("--scale0", default=0.2, type=float, help="Weight on shape regularization")
+parser.add_argument("-r", "--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
+parser.add_argument("-rw", "--reg_w", default=0.05, type=float, help="Weight on shape regularization")
+parser.add_argument("-s0", "--scale0", default=0.01, type=float, help="Weight on shape regularization")
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
 parser.add_argument("--adv_tex", action="store_true", default=False, help="Attack using texture too?")
+parser.add_argument("--rng_tex", action="store_true", default=False, help="Attack using random init texture too?")
 parser.add_argument("--adv_ver", action="store_true", default=False, help="Attack using vertices too?")
 parser.add_argument("--ts", dest="ts", default=2, help="Textre suze")
 parser.add_argument("--correct_class", default=11, type=int, help="Which class we want to avoid")
@@ -289,6 +290,7 @@ def prepare_adversary(args):
             texture_size=args.ts,
             adv_tex=args.adv_tex,
             adv_ver=args.adv_ver,
+            rng_tex=args.rng_tex,
         )
         adv_objs[k] = adv_obj
         if args.adv_ver:
