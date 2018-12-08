@@ -5,6 +5,14 @@ To do a basic draw:
 `python adversarial_objects/draw.py`
 Output is written to adversarial_objects/output/custom_stop_sign.png
 
+For attacking YOLO:
+-> First, we need to get YOLO ready.
+```cd yolo_v3/data ; bash get_enough_coco.sh ; cd ../../```
+```cd yolo_v3/weights ; bash download_weights.sh ; cd ../../```
+
+Now we strike!
+```python adversarial_objects/yolo_atk.py```
+
 # Neural 3D Mesh Renderer (CVPR 2018)
 
 This repo contains a PyTorch implementation of the paper [Neural 3D Mesh Renderer](http://hiroharu-kato.com/projects_en/neural_renderer.html) by Hiroharu Kato, Yoshitaka Ushiku, and Tatsuya Harada.
