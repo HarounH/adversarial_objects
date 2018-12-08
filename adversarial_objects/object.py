@@ -22,8 +22,29 @@ import torch.utils.data.sampler as samplers
 import tqdm
 import imageio
 from skimage.io import imread, imsave
+import PIL
 import pdb
 import neural_renderer as nr
+from torchvision import transforms
+
+
+class Background(nn.Module):
+    def __init__(self, filepath, args):
+        super(Background, self).__init__()
+        self.image = PIL.Image.open(filepath)
+        self.image_size = args.image_size
+
+    def render_image(self, rotation_fn=lambda x: x, pytorch_mode=False):
+        transform = transforms.Compose([
+            transforms.Resize((self.image_size, self.image_size)),
+            transforms.ToTensor(),
+        ])
+        data = np.transpose(transform(rotation_fn(self.image)), [1, 2, 0]).detach().numpy()
+        retval = torch.tensor((data - data.min()) / (data.max() - data.min()), device='cuda')
+        if pytorch_mode:
+            return retval.permute(2, 0, 1)
+        else:
+            return retval
 
 
 class Object(nn.Module):
@@ -70,7 +91,7 @@ class Object(nn.Module):
         self.faces = faces[None, :, :].cuda()
         self.cuda()
 
-    def render_parameters(self,affine_transform=None):
+    def render_parameters(self, affine_transform=None):
         vertices, faces, textures = self.vertices, self.faces, self.textures
         if self.adv_ver:
             vertices = torch.zeros(self.vertices.shape, dtype=torch.float, device='cuda')
