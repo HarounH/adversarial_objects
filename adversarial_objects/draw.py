@@ -80,6 +80,7 @@ class Object(nn.Module):
 def combine_images_in_order(image_list, args):
     result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
     for image in image_list:
+        pdb.set_trace()
         image = (image - image.min()) / (image.max() - image.min())
         selector = (torch.abs(image).sum(dim=2, keepdim=True) == 0).float()
         result = result * selector + image

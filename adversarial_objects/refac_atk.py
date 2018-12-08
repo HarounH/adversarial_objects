@@ -37,7 +37,7 @@ def combine_images_in_order(image_list, args):
     for image in image_list:
         selector = (torch.abs(image).sum(dim=2, keepdim=True) == 0).float()
         result = result * selector + image
-    result = (result - result.min()) / (result.max() - result.min())
+    # result = (result - result.min()) / (result.max() - result.min())
     return result
 
 from victim_0.network import get_victim
@@ -53,7 +53,7 @@ parser.add_argument("--image_size", default=32, type=int, help="Square Image siz
 parser.add_argument("--victim_path", default="victim_0/working_model_91.chk", help="Path relative current_dir to attack model.")
 parser.add_argument("--signnames_path", default="victim_0/signnames.csv", help="Path where the signnames.csv is located.")
 
-parser.add_argument("-bg", "--background", dest="background", type=str, default="highway.jpg", help="Path to background file (image)")
+parser.add_argument("-bg", "--background", dest="background", type=str, default="highway2.jpg", help="Path to background file (image)")
 parser.add_argument("-bo", "--base_object", dest="base_object", type=str, default="custom_stop_sign.obj", help="Name of .obj file containing stop sign")
 parser.add_argument("-cp", "--cube_path", dest="evil_cube_path", default="evil_cube_1.obj", help="Path to basic cube shape")
 
@@ -70,6 +70,7 @@ parser.add_argument("--bs", default=4, type=int, help="Batch size")
 parser.add_argument("--nobj", default=1, type=int, help="Batch size")
 # Attack specification
 parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # noqa
+parser.add_argument("--fna_ad", dest="fna_ad", default=False, action="store_true")  # noqa
 parser.add_argument("--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
 parser.add_argument("--reg_w", default=0.05, type=float, help="Weight on shape regularization")
 parser.add_argument("--scale0", default=0.05, type=float, help="Weight on shape regularization")
@@ -78,7 +79,7 @@ parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constrai
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
 parser.add_argument("--adv_tex", action="store_true", default=False, help="Attack using texture too?")
 parser.add_argument("--adv_ver", action="store_true", default=False, help="Attack using vertices too?")
-parser.add_argument("--ts", dest="ts", default=2, help="Textre suze")
+parser.add_argument("--ts", dest="ts",  type=int, default=2, help="Textre suze")
 parser.add_argument("--target_class", default=-1, type=int, help="Class of the target that you want the object to be classified as. Negative if not using a targeted attack")
 # Hardware
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
@@ -158,6 +159,7 @@ if __name__ == '__main__':
     # Create adversary
     parameters = {}
     adv_objs = {}
+    adv_objs_base = {}
     for k in range(args.nobj):
         adv_obj = Object(
             os.path.join(data_dir, args.evil_cube_path),
@@ -166,6 +168,10 @@ if __name__ == '__main__':
             adv_ver=args.adv_ver,
         )
         adv_objs[k] = adv_obj
+        adv_obj_base = Object(
+            os.path.join(data_dir, args.evil_cube_path),
+        )
+        adv_objs_base[k] = adv_obj_base
         if args.adv_ver:
             parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
         if args.translation_clamp > 0:
@@ -240,6 +246,12 @@ if __name__ == '__main__':
                 parameters['translation{}'.format(k)],
                 parameters['rotation{}'.format(k)],
             )) for k, adv_obj in adv_objs.items()]
+        adv_vfts_base = [adv_obj_base.render_parameters(
+            affine_transform=create_affine_transform(
+                parameters['scaling{}'.format(k)],
+                parameters['translation{}'.format(k)],
+                parameters['rotation{}'.format(k)],
+            )) for k, adv_obj_base in adv_objs_base.items()]
         # pdb.set_trace()
 
         vft = combine_objects(
@@ -289,6 +301,9 @@ if __name__ == '__main__':
         image = image.permute(0, 3, 1, 2) # [1, RGB, is, is]
         if args.nps:
             loss += regularization.nps(image)
+        if args.fna_ad:
+            for k, adv_vft in enumerate(adv_vfts):
+                loss += 10*regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0])
 
         if i % (args.max_iterations//10) ==0:
             # pdb.set_trace()
