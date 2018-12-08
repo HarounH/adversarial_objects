@@ -72,6 +72,25 @@ def fna_ad(vertices, faces, vertices_base):
         val+=(n-n_base).norm(2)
     return val / faces.shape[0]
 
+def edge_variance(vertices, faces):
+    """
+    args,
+        vertices: bs, nv, 3
+    return
+        val: scalar
+    """
+    lengths = []
+    for bidx in range(faces.shape[0]):
+        temp_f = faces[bidx, :, :].long()
+        temp_v = vertices[bidx, :, :]
+        v = []
+        for i in range(faces.shape[2]):
+            v.append(F.embedding(temp_f[:, i], temp_v))
+        lengths.append( (v[1] - v[0]).norm(2).mean().item())
+        lengths.append( (v[2] - v[0]).norm(2).mean().item())
+        lengths.append( (v[1] - v[2]).norm(2).mean().item())
+    return np.std(np.array(lengths))
+
 def edge_length(vertices, faces):
     """
     args,
@@ -136,6 +155,7 @@ function_lookup = {
     'aabb_volume': aabb_volume,
     'radius_volume': radius_volume,
     'edge_length': edge_length,
+    'edge_variance': edge_variance,
 }
 
 

@@ -78,6 +78,7 @@ parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 con
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
 parser.add_argument("--adv_tex", action="store_true", default=False, help="Attack using texture too?")
+parser.add_argument("--rng_tex", action="store_true", default=False, help="Attack using random init texture too?")
 parser.add_argument("--adv_ver", action="store_true", default=False, help="Attack using vertices too?")
 parser.add_argument("--ts", dest="ts",  type=int, default=2, help="Textre suze")
 parser.add_argument("--target_class", default=-1, type=int, help="Class of the target that you want the object to be classified as. Negative if not using a targeted attack")
@@ -85,7 +86,8 @@ parser.add_argument("--target_class", default=-1, type=int, help="Class of the t
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
 
 parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
-parser.add_argument("--validation_range", default=30, type=int, help="Range over which to validate the image")
+parser.add_argument("--validation_range", default=22, type=int, help="Range over which to validate the image")
+parser.add_argument("--training_range", default=15, type=int, help="Range over which to train the image")
 
 args = parser.parse_args()
 args.cuda = args.cuda and torch.cuda.is_available()
@@ -93,7 +95,7 @@ args.cuda = args.cuda and torch.cuda.is_available()
 current_dir = os.path.dirname(os.path.realpath(__file__))
 data_dir = os.path.join(current_dir, args.data_dir)
 output_dir = os.path.join(current_dir, args.output_dir)
-tensorboard_dir = os.path.join(current_dir, args.tensorboard_dir)
+tensorboard_dir = os.path.join(current_dir, args.output_dir, args.tensorboard_dir)
 
 try:
     os.makedirs([output_dir, tensorboard_dir])
@@ -166,6 +168,7 @@ if __name__ == '__main__':
             texture_size=args.ts,
             adv_tex=args.adv_tex,
             adv_ver=args.adv_ver,
+            rng_tex=args.rng_tex,
         )
         adv_objs[k] = adv_obj
         adv_obj_base = Object(
@@ -214,7 +217,7 @@ if __name__ == '__main__':
 
     bg_img = background.render_image().cuda()
     image = combine_images_in_order([bg_img, obj_image], args) # [is, is, RGB]
-    imsave(os.path.join(output_dir, "safe." + args.output_filename), image.detach().cpu().numpy())
+    imsave(os.path.join(output_dir, "safe_" + args.output_filename), image.detach().cpu().numpy())
     image = image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
     # Load model
     victim = get_victim(args.victim_path).cuda()  # nn.Module
@@ -230,7 +233,7 @@ if __name__ == '__main__':
     # print("ypred: {}".format(ypred))
 
     # Optimize loss function
-    writer = SummaryWriter(log_dir=args.tensorboard_dir)
+    writer_tf = SummaryWriter(log_dir=tensorboard_dir)
     loss_handler = LossHandler()
 
     for i in range(args.max_iterations):
@@ -262,7 +265,7 @@ if __name__ == '__main__':
 
         rot_matrices = []
         for idx in range(args.bs):
-            angle = np.random.uniform(75, 105)
+            angle = np.random.uniform(90, 90+args.training_range)
             rotation_y = torch.eye(4)
             rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle))
             rotation_y[0, 2] = -torch.sin(torch.tensor(angle))
@@ -303,11 +306,11 @@ if __name__ == '__main__':
             loss += regularization.nps(image)
         if args.fna_ad:
             for k, adv_vft in enumerate(adv_vfts):
-                loss += 10*regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0])
+                loss += 2*regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0])
 
         if i % (args.max_iterations//10) ==0:
             # pdb.set_trace()
-            for bi in range(1):
+            for bi in range(0):
                 imsave(
                     os.path.join(output_dir, "batch{}.iter{}.".format(bi, i) + args.output_filename),
                     np.transpose(image.detach().cpu().numpy()[bi], (1, 2, 0)),
@@ -336,10 +339,24 @@ if __name__ == '__main__':
             [parameters['texture{}'.format(k)].data.clamp_(-0.9, 0.9) for k in range(args.nobj)]
 
         # Print out the loss
-        if i%10==0:
+        if i%1==0:
             loss_handler['loss'][i].append(loss.item())
             loss_handler['target_probability'][i].append(y[:, args.target_class].mean(0).sum().detach().cpu().numpy())
-            loss_handler.log_epoch(writer, i)
+            loss_handler['stop_sign_probability'][i].append(y[:, ytrue_label].mean(0).sum().detach().cpu().numpy())
+            loss_handler['fna_ad'][i].append(regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0]).item())
+            surface_area_reg = 0.0
+            for k, adv_vft in enumerate(adv_vfts):
+                surface_area_reg += (regularization.function_lookup['surface_area'](adv_vft[0], adv_vft[1]))
+            edge_length_reg = 0.0
+            for k, adv_vft in enumerate(adv_vfts):
+                edge_length_reg += (regularization.function_lookup['edge_length'](adv_vft[0], adv_vft[1]))
+            edge_variance = 0.0
+            for k, adv_vft in enumerate(adv_vfts):
+                edge_variance += (regularization.function_lookup['edge_variance'](adv_vft[0], adv_vft[1]))
+            loss_handler['surface_area'][i].append(surface_area_reg.item())
+            loss_handler['edge_variance'][i].append(edge_variance.item())
+            loss_handler['edge_length'][i].append(edge_length_reg.item())
+            loss_handler.log_epoch(writer_tf, i)
 
     ###############################################
     ###############################################
@@ -360,13 +377,14 @@ if __name__ == '__main__':
     correct_target = 0
     # The labels of the adversarial image from different azimuths when the detection is succesful
     adv_labels = []
-    loop = range(90 - args.validation_range, 90 + args.validation_range, 1)
+    loop = range(90 , 90 + 2*args.validation_range, 1)
     # loop = tqdm.tqdm(range(0, 360, 4))
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
     writer2 = imageio.get_writer(os.path.join(output_dir, "final_cube_" + args.output_filename + '.gif'), mode='I')
     writer3 = imageio.get_writer(os.path.join(output_dir, "hq_final_cube_" + args.output_filename + '.gif'), mode='I')
 
-
+    tf_gif_cube = torch.zeros([1,len(loop),3,6*args.image_size,6*args.image_size], device='cuda')
+    tf_gif = torch.zeros([1,len(loop),3,6*args.image_size,6*args.image_size], device='cuda')
     bg_img = background.render_image().cuda()
     bg_img_big = background_big.render_image().cuda()
     for num, azimuth in enumerate(loop):
@@ -400,6 +418,9 @@ if __name__ == '__main__':
         raw_image = renderer(*obj_vft)
         adv_image = renderer(*vft)
         adv_image_big = renderer_gif(*vft)
+
+
+
         adv_image = adv_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
         adv_image_big = adv_image_big.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
         raw_image = raw_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
@@ -414,6 +435,8 @@ if __name__ == '__main__':
         cube_image_ = cube_image.detach().cpu().numpy()
 
 
+
+
         # image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))  # [image_size, image_size, RGB]
         writer.append_data((255*adv_image_).astype(np.uint8))
         writer2.append_data((255*cube_image_).astype(np.uint8))
@@ -421,7 +444,15 @@ if __name__ == '__main__':
 
         # Validation
         adv_image = adv_image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
+        cube_image = cube_image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
         raw_image = raw_image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
+        adv_image_big = adv_image_big.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
+
+        adv_img_gif = torch.stack([adv_image_big[0,2,:,:],adv_image_big[0,1,:,:],adv_image_big[0,0,:,:]], dim=0)
+        cube_image_gif = torch.stack([cube_image[0,2,:,:],cube_image[0,1,:,:],cube_image[0,0,:,:]], dim=0)
+        # pdb.set_trace()
+        tf_gif[0,num,:,:,:] = (255*adv_img_gif.detach())
+        tf_gif_cube[0,num,:,:,:] = (255*cube_image_gif.detach())
         # Run victim on created image.
         y_adv = victim(adv_image)
         y_raw = victim(raw_image)
@@ -451,4 +482,12 @@ if __name__ == '__main__':
             signnames[args.target_class],
             correct_target,
             len(adv_labels)))
+        loss_handler['targeted_attack'][-1].append((correct_target/(0.0+len(adv_labels))))
+    loss_handler['raw_accuracy'][-1].append((correct_raw/(0.0+len(loop))))
+    loss_handler['attack_accuracy'][-1].append(((correct_raw-correct_adv)/(0.0+correct_raw)))
+    loss_handler.log_epoch(writer_tf, -1)
+    tf_gif = tf_gif.permute(0,2,1,3,4)
+    tf_gif_cube = tf_gif_cube.permute(0,2,1,3,4)
+    # writer_tf.add_video("Scene_4_gif",tf_gif,fps=2)
+    # writer_tf.add_video("Object_4_gif",tf_gif_cube,fps=2)
     # pdb.set_trace()
