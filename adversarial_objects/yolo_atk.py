@@ -65,7 +65,7 @@ parser.add_argument("--image_size", default=416, type=int, help="Square Image si
 # Required for input generation
 parser.add_argument("--data_dir", type=str, default='data', help="Location where data is present")
 parser.add_argument("--tensorboard_dir", dest="tensorboard_dir", type=str, default="tensorboard", help="Subdirectory to save logs using tensorboard")  # noqa
-parser.add_argument("--output_dir", type=str, default='output/yolo', help="Location where data is present")
+parser.add_argument("-od", "--output_dir", type=str, default='output/yolo', help="Location where data is present")
 parser.add_argument("-o", "--output", dest="output_filename", type=str, default="ywdo", help="Filename for output GIF")
 
 parser.add_argument("-bg", "--background", dest="background", type=str, default="highway1.jpg", help="Path to background file (image)")
@@ -74,28 +74,30 @@ parser.add_argument("-ap", "--attacker_path", dest="attacker_path", default="evi
 
 # Optimization
 parser.add_argument("-iter", "--max_iterations", type=int, default=100, help="Number of iterations to attack for.")
-parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at which to do steps.")
+parser.add_argument("--lr", dest="lr", default=0.005, type=float, help="Rate at which to do steps.")
 parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
 parser.add_argument("--bs", default=4, type=int, help="Batch size")
 # Attack specification
 parser.add_argument("--nobj", default=1, type=int, help="Number of objects to attack with")
 parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # noqa
+parser.add_argument("--fna_ad", dest="fna_ad", default=False, action="store_true")  # noqa
 parser.add_argument("-r", "--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
 parser.add_argument("-rw", "--reg_w", default=0.05, type=float, help="Weight on shape regularization")
-parser.add_argument("-s0", "--scale0", default=0.01, type=float, help="Weight on shape regularization")
+parser.add_argument("-s0", "--scale0", default=0.15, type=float, help="Weight on shape regularization")
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
 parser.add_argument("--adv_tex", action="store_true", default=False, help="Attack using texture too?")
 parser.add_argument("--rng_tex", action="store_true", default=False, help="Attack using random init texture too?")
 parser.add_argument("--adv_ver", action="store_true", default=False, help="Attack using vertices too?")
-parser.add_argument("--ts", dest="ts", default=2, help="Textre suze")
+parser.add_argument("--ts", dest="ts", default=2, type=int, help="Textre suze")
 parser.add_argument("--correct_class", default=11, type=int, help="Which class we want to avoid")
 parser.add_argument("-tc", "--target_class", default=-1, type=int, help="Class of the target that you want the object to be classified as. Negative if not using a targeted attack")
 
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
 parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
 parser.add_argument("--validation_range", default=30, type=int, help="One sided angle range over which to validate the image")
+parser.add_argument("--training_range", default=30, type=int, help="Range over which to train the image")
 
 args = parser.parse_args()
 
@@ -184,7 +186,7 @@ def get_mAP(all_correct_detections, all_attacked_detections, attacked_class=11):
     print("AP[attacked class {}]={}".format(attacked_class, average_precisions[attacked_class]))
     mAP = np.mean(list(average_precisions.values()))
     print("mAP: {}".format(mAP))
-
+    return average_precisions[attacked_class]
 
 def combine_objects(vs, fs, ts):
     n = len(vs)
@@ -215,7 +217,7 @@ def create_affine_transform(scaling, translation, rotation):
     for i in range(3):
         scaling_matrix[i, i] = scaling[i]
     translation_matrix = torch.eye(4)
-    for i in range(1, 3):
+    for i in range(1 if args.adv_tex else 0, 3):
         translation_matrix[3, i] = translation[i]
     rotation_x = torch.eye(4)
     rotation_x[1, 1] = rotation_x[2, 2] = torch.cos(rotation[0])
@@ -229,7 +231,7 @@ def create_affine_transform(scaling, translation, rotation):
     rotation_z[0, 0] = rotation_z[1, 1] = torch.cos(rotation[2])
     rotation_z[0, 1] = torch.sin(rotation[2])
     rotation_z[1, 0] = -rotation_z[0, 1]
-    return rotation_x.mm(rotation_y.mm(rotation_z.mm(translation_matrix.mm(scaling_matrix))))
+    return scaling_matrix.mm(rotation_y.mm(rotation_z.mm(rotation_x.mm(translation_matrix))))
 
 
 def save_image_with_detections(img, detections, filename):
@@ -284,6 +286,7 @@ def save_image_with_detections(img, detections, filename):
 def prepare_adversary(args):
     parameters = {}
     adv_objs = {}
+    adv_objs_base = {}
     for k in range(args.nobj):
         adv_obj = Object(
             os.path.join(data_dir, args.attacker_path),
@@ -293,28 +296,33 @@ def prepare_adversary(args):
             rng_tex=args.rng_tex,
         )
         adv_objs[k] = adv_obj
+        adv_obj_base = Object(
+            os.path.join(data_dir, args.attacker_path),
+        )
+        adv_objs_base[k] = adv_obj_base
         if args.adv_ver:
             parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
+
         if args.translation_clamp > 0:
-            translation_param = torch.tensor([0, 0.02, 0.02], device="cuda") * torch.randn((3,), device='cuda') + torch.tensor([0.1,  -1.5 + np.cos(2 * np.pi * k / args.nobj), 1.5 + np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
+            translation_param = torch.tensor([0, 0.02, 0.02], device="cuda") * torch.randn((3,), device='cuda') + torch.tensor([0.1,  2 * 2.0 * args.scale0 * np.cos(2 * np.pi * k / args.nobj), 2.5 + 2 * 2.0 * args.scale0 * np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
             translation_param.requires_grad_(True)
             parameters['translation{}'.format(k)] = translation_param
+
         if args.rotation_clamp > 0:
             rotation_param = torch.randn((3,), requires_grad=True, device='cuda')
             parameters['rotation{}'.format(k)] = rotation_param
-
         else:
-            parameters['rotation{}'.format(k)] = torch.zeros((3,),requires_grad=False,device='cuda')
+            parameters['rotation{}'.format(k)] = torch.zeros((3,), requires_grad=False, device='cuda')
 
         if args.scaling_clamp > 0:
-            scaling_param = args.scale0 * (torch.ones((3,),requires_grad=False,device='cuda') + torch.rand((3,), requires_grad=False, device='cuda'))
+            scaling_param = args.scale0 * (torch.ones((3,), requires_grad=False, device='cuda') + torch.rand((3,), requires_grad=False, device='cuda'))
             scaling_param.requires_grad_(True)
             parameters['scaling{}'.format(k)] = scaling_param
         else:
             parameters['scaling{}'.format(k)] = torch.ones((3,),requires_grad=False,device='cuda') * args.scale0
         if args.adv_tex:
             parameters['texture{}'.format(k)] = adv_obj.textures
-    return adv_objs, parameters
+    return adv_objs, parameters, adv_objs_base
 
 
 if __name__ == '__main__':
@@ -335,7 +343,7 @@ if __name__ == '__main__':
         adv_ver=False,
         adv_tex=False,
     )
-    stop_sign_translation = torch.tensor([0.0, -1.5, 1.5]).cuda()
+    stop_sign_translation = torch.tensor([0.0, -1.5, 2.5]).cuda()
     stop_sign.vertices += stop_sign_translation
     obj_image = renderer(*(stop_sign.render_parameters())) # [1, RGB, is, is]
     obj_image = obj_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
@@ -365,7 +373,7 @@ if __name__ == '__main__':
     save_image_with_detections(image.detach()[0].cpu().numpy().transpose(1, 2, 0), detections, "noatk.png")
 
     # Load adversary
-    adv_objs, parameters = prepare_adversary(args)
+    adv_objs, parameters, adv_objs_base = prepare_adversary(args)
 
 
     optimizer = optim.Adam(
@@ -373,6 +381,10 @@ if __name__ == '__main__':
         lr=args.lr,
         weight_decay=args.weight_decay
     )
+
+    # Optimize loss function
+    writer_tf = SummaryWriter(log_dir=tensorboard_dir)
+    loss_handler = LossHandler(print_every=10)
 
     for itr in range(args.max_iterations):
         start = time.time()
@@ -385,16 +397,22 @@ if __name__ == '__main__':
                 parameters['translation{}'.format(k)],
                 parameters['rotation{}'.format(k)],
             )) for k, adv_obj in adv_objs.items()]
+        adv_vfts_base = [adv_obj.render_parameters(
+            affine_transform=create_affine_transform(
+                parameters['scaling{}'.format(k)],
+                parameters['translation{}'.format(k)],
+                parameters['rotation{}'.format(k)],
+            )) for k, adv_obj in adv_objs_base.items()]
 
         rot_matrices = []
         bg_imgs = []
         for idx in range(args.bs):
-            angle = np.random.uniform(75, 105)
+            angle = np.random.uniform(-args.training_range, 0.0)
             rotation_fn = lambda img: img  # torchvision.transforms.functional.rotate(img, angle)
             bg_imgs.append(background.render_image(rotation_fn, pytorch_mode=True))  # 3, 416, 416
             rotation_y = torch.eye(4)
-            rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle))
-            rotation_y[0, 2] = -torch.sin(torch.tensor(angle))
+            rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(np.pi * angle / 180.0))
+            rotation_y[0, 2] = -torch.sin(torch.tensor(np.pi * angle / 180.0))
             rotation_y[2, 0] = -rotation_y[0, 2]
             rotation_y = rotation_y.unsqueeze(0)
             rot_matrices.append(rotation_y)
@@ -478,6 +496,9 @@ if __name__ == '__main__':
                 loss += sum(args.reg_w * regularization.function_lookup[reg](adv_vft[0], adv_vft[1]) for reg in args.reg)
         if args.nps:
             loss += regularization.nps(attacked_image)
+        if args.fna_ad:
+            for k, adv_vft in enumerate(adv_vfts):
+                loss += 2*regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0])
 
         optimizer.zero_grad()
         loss.backward()
@@ -485,14 +506,39 @@ if __name__ == '__main__':
 
         if args.scaling_clamp>0.0:
             [parameters['scaling{}'.format(k)].data.clamp_(0.01, args.scaling_clamp) for k in range(args.nobj)]
-        if args.translation_clamp>0.0:
-            [parameters['translation{}'.format(k)].data.clamp_(- args.translation_clamp, args.translation_clamp) for k in range(args.nobj)]
+        # if args.translation_clamp>0.0:
+        #     [parameters['translation{}'.format(k)].data.clamp_(- args.translation_clamp, args.translation_clamp) for k in range(args.nobj)]
         if args.rotation_clamp>0.0:
             [parameters['rotation{}'.format(k)].data.clamp_(-args.rotation_clamp, args.rotation_clamp) for k in range(args.nobj)]
         if args.adv_tex:
             [parameters['texture{}'.format(k)].data.clamp_(-0.9, 0.9) for k in range(args.nobj)]
 
+        # Print out the loss
+        if i%1==0:
+            loss_handler['loss'][i].append(loss.item())
+
+            fna_ad_val = 0.0
+            for k, adv_vft in enumerate(adv_vfts):
+                fna_ad_val += regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0]).item()
+            loss_handler['fna_ad'][i].append(fna_ad_val)
+
+            loss_handler['nps'][i].append(regularization.nps(image).item())
+            surface_area_reg = 0.0
+            for k, adv_vft in enumerate(adv_vfts):
+                surface_area_reg += (regularization.function_lookup['surface_area'](adv_vft[0], adv_vft[1]))
+            edge_length_reg = 0.0
+            for k, adv_vft in enumerate(adv_vfts):
+                edge_length_reg += (regularization.function_lookup['edge_length'](adv_vft[0], adv_vft[1]))
+            edge_variance = 0.0
+            for k, adv_vft in enumerate(adv_vfts):
+                edge_variance += (regularization.function_lookup['edge_variance'](adv_vft[0], adv_vft[1]))
+            loss_handler['surface_area'][i].append(surface_area_reg.item())
+            loss_handler['edge_variance'][i].append(edge_variance.item())
+            loss_handler['edge_length'][i].append(edge_length_reg.item())
+            loss_handler.log_epoch(writer_tf, i)
         print("[{}/{}:{:.2f}s] loss={} {}".format(itr, args.max_iterations, time.time() - start, loss.item(), "attack_count={}/batch_size={}".format(attack_count, args.bs) if args.target_class > 0 else ""))
+
+
 
     print("DONE TRAINING!")
     ###############################################
@@ -508,16 +554,21 @@ if __name__ == '__main__':
     model.eval()
     renderer_attacked_gif = nr.Renderer(camera_mode='look_at', image_size=args.image_size)
     renderer_attacker_gif = nr.Renderer(camera_mode='look_at', image_size=args.image_size)
+
     writer_attacked = imageio.get_writer(os.path.join(output_dir, "final_attacked_" + args.output_filename + '.gif'), mode='I')
     writer_attacker = imageio.get_writer(os.path.join(output_dir, "final_attacker_" + args.output_filename + '.gif'), mode='I')
 
     all_correct_detections = []
     all_attacked_detections = []  # These are used to compute some score.
 
-    loop = range(90 - args.validation_range, 90 + args.validation_range, 1)
+    loop = list(range(90 - 2 * args.validation_range, 91, 1))[::-1]
     actual_bs = args.bs
     args.bs = 1
+
     for num, azimuth in enumerate(loop):
+        renderer_attacked_gif.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
+        renderer_attacker_gif.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth * 180 / args.validation_range)
+
         with torch.no_grad():
             obj_vft = stop_sign.render_parameters()
             adv_vfts = [adv_obj.render_parameters(
@@ -541,6 +592,7 @@ if __name__ == '__main__':
             )[:, :, :3]
             rotated_obj_vft[1] = rotated_obj_vft[1].expand(args.bs, *(rotated_obj_vft[1].shape[1:]))
             rotated_obj_vft[2] = rotated_obj_vft[2].expand(args.bs, *(rotated_obj_vft[2].shape[1:]))
+
             # IMAGE
             vft = combine_objects(
                 [obj_vft[0]] + [adv_vft[0] for adv_vft in adv_vfts],
@@ -573,17 +625,18 @@ if __name__ == '__main__':
                     dim=2),
                 rot_matrices,
             )[:, :, :3]
+            attacker_vft[0] -= attacker_vft[0].mean()
             attacker_vft[1] = attacker_vft[1].expand(args.bs, *(attacker_vft[1].shape[1:]))
             attacker_vft[2] = attacker_vft[2].expand(args.bs, *(attacker_vft[2].shape[1:]))
 
             # Construct image without adversary to get target
-            rotated_obj_img = renderer(*rotated_obj_vft)
+            rotated_obj_img = renderer_attacked_gif(*rotated_obj_vft)
             normal_image = combine_images_in_order([bg_img, rotated_obj_img], rotated_obj_img.shape, color_dim=1)
             correct_detections = model(normal_image)
             correct_target = non_max_suppression(correct_detections, 80, 0.8, 0.4)[0]
 
             # Construct the image with target
-            adv_img = renderer(*vft)
+            adv_img = renderer_attacked_gif(*vft)
             attacked_image = combine_images_in_order([bg_img, adv_img], adv_img.shape, color_dim=1)
             attacked_detections = model(attacked_image)
             attacked_target = non_max_suppression(attacked_detections, 80, 0.8, 0.4)[0]
@@ -591,9 +644,9 @@ if __name__ == '__main__':
             if azimuth == 90:
                 save_image_with_detections(attacked_image.detach()[0].cpu().numpy().transpose(1, 2, 0), [attacked_target], "atk.png")
 
-
             # Construct the image with ONLY the target
-            attacker_image = renderer(*attacker_vft)
+            attacker_image = renderer_attacker_gif(*attacker_vft)
+
             # Write images!
             writer_attacked.append_data((255 * (attacked_image.squeeze().permute(1, 2, 0).detach().cpu().numpy())).astype(np.uint8))
             writer_attacker.append_data((255 * (attacker_image.squeeze().permute(1, 2, 0).detach().cpu().numpy())).astype(np.uint8))
@@ -619,7 +672,9 @@ if __name__ == '__main__':
                         for label in range(YOLO_NUM_CLASSES):
                             all_detections[-1][label] = pred_boxes[pred_labels == label]
     args.bs = actual_bs
-    get_mAP(all_correct_detections, all_attacked_detections)
+    AP_target = get_mAP(all_correct_detections, all_attacked_detections)
+    loss_handler['AP'][-1].append(AP_target)
+    loss_handler.log_epoch(writer_tf, -1)
 
     writer_attacked.close()
     writer_attacker.close()
