@@ -2,9 +2,10 @@ from collections import defaultdict
 import numpy as np
 import csv
 class LossHandler:
-    def __init__(self):
+    def __init__(self, print_every=1):
         # name -> epoch -> list (per batch)
         self.logs = defaultdict(lambda: defaultdict(list))
+        self.print_every = print_every
 
     def __getitem__(self, *args, **kwargs):
         return self.logs.__getitem__(*args, **kwargs)
@@ -15,7 +16,8 @@ class LossHandler:
     def log_epoch(self, writer, epoch):
         for k, v in self.logs.items():
             if epoch in v:
-                print("{}[{}]: {}".format(k, epoch, np.mean(v[epoch])))
+                if (epoch < 0) or (epoch % self.print_every == 0):
+                    print("{}[{}]: {}".format(k, epoch, np.mean(v[epoch])))
                 writer.add_scalar(k, np.mean(v[epoch]), epoch)
 
 class SignReader:
@@ -28,4 +30,3 @@ class SignReader:
                 self.signs[int(i)] = signname
     def __getitem__(self, *args, **kwargs):
         return self.signs.__getitem__(*args, **kwargs)
-

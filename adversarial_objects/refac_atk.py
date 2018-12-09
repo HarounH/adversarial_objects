@@ -344,7 +344,12 @@ if __name__ == '__main__':
             loss_handler['loss'][i].append(loss.item())
             loss_handler['target_probability'][i].append(y[:, args.target_class].mean(0).sum().detach().cpu().numpy())
             loss_handler['stop_sign_probability'][i].append(y[:, ytrue_label].mean(0).sum().detach().cpu().numpy())
-            loss_handler['fna_ad'][i].append(regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0]).item())
+
+            fna_ad_val = 0.0
+            for k, adv_vft in enumerate(adv_vfts):
+                fna_ad_val += regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0]).item()
+            loss_handler['fna_ad'][i].append(fna_ad_val)
+
             loss_handler['nps'][i].append(regularization.nps(image).item())
             surface_area_reg = 0.0
             for k, adv_vft in enumerate(adv_vfts):
