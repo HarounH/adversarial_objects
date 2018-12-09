@@ -78,7 +78,7 @@ parser.add_argument("--lr", dest="lr", default=0.005, type=float, help="Rate at 
 parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
 parser.add_argument("--bs", default=4, type=int, help="Batch size")
 # Attack specification
-parser.add_argument("--nobj", default=1, type=int, help="Number of objects to attack with")
+parser.add_argument("--nobj", default=5, type=int, help="Number of objects to attack with")
 parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # noqa
 parser.add_argument("--fna_ad", dest="fna_ad", default=False, action="store_true")  # noqa
 parser.add_argument("-r", "--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
@@ -90,7 +90,7 @@ parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constrain
 parser.add_argument("--adv_tex", action="store_true", default=False, help="Attack using texture too?")
 parser.add_argument("--rng_tex", action="store_true", default=False, help="Attack using random init texture too?")
 parser.add_argument("--adv_ver", action="store_true", default=False, help="Attack using vertices too?")
-parser.add_argument("--ts", dest="ts", default=2, type=int, help="Textre suze")
+parser.add_argument("--ts", dest="ts", default=4, type=int, help="Textre suze")
 parser.add_argument("--correct_class", default=11, type=int, help="Which class we want to avoid")
 parser.add_argument("-tc", "--target_class", default=-1, type=int, help="Class of the target that you want the object to be classified as. Negative if not using a targeted attack")
 
@@ -367,8 +367,8 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         detections = model(image)
+        pdb.set_trace()
         detections = non_max_suppression(detections, 80, 0.8, 0.4)
-
     # Create plot
     save_image_with_detections(image.detach()[0].cpu().numpy().transpose(1, 2, 0), detections, "noatk.png")
 
