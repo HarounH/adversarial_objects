@@ -73,7 +73,7 @@ parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # 
 parser.add_argument("--fna_ad", dest="fna_ad", default=False, action="store_true")  # noqa
 parser.add_argument("--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
 parser.add_argument("--reg_w", default=0.05, type=float, help="Weight on shape regularization")
-parser.add_argument("--scale0", default=0.09, type=float, help="Weight on shape regularization")
+parser.add_argument("--scale0", default=0.15, type=float, help="Weight on shape regularization")
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
@@ -86,8 +86,8 @@ parser.add_argument("--target_class", default=-1, type=int, help="Class of the t
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
 
 parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
-parser.add_argument("--validation_range", default=22, type=int, help="Range over which to validate the image")
-parser.add_argument("--training_range", default=15, type=int, help="Range over which to train the image")
+parser.add_argument("--validation_range", default=30, type=int, help="Range over which to validate the image")
+parser.add_argument("--training_range", default=30, type=int, help="Range over which to train the image")
 
 args = parser.parse_args()
 args.cuda = args.cuda and torch.cuda.is_available()
@@ -304,7 +304,7 @@ if __name__ == '__main__':
         image = combine_images_in_order([bg_img, image], args)
         image = image.permute(0, 3, 1, 2) # [1, RGB, is, is]
         if args.nps:
-            loss += 500*regularization.nps(image)
+            loss += 5*regularization.nps(image)
         if args.fna_ad:
             for k, adv_vft in enumerate(adv_vfts):
                 loss += 2*regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0])
@@ -359,7 +359,7 @@ if __name__ == '__main__':
             loss_handler['edge_variance'][i].append(edge_variance.item())
             loss_handler['edge_length'][i].append(edge_length_reg.item())
             loss_handler.log_epoch(writer_tf, i)
-
+    # pdb.set_trace()
     ###############################################
     ###############################################
     ###############################################
@@ -379,7 +379,7 @@ if __name__ == '__main__':
     correct_target = 0
     # The labels of the adversarial image from different azimuths when the detection is succesful
     adv_labels = []
-    loop = range(90 - 2*args.validation_range, 90, 1)
+    loop = range(90 - 2*args.validation_range, 91, 1)
     # loop = tqdm.tqdm(range(0, 360, 4))
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
     writer2 = imageio.get_writer(os.path.join(output_dir, "final_cube_" + args.output_filename + '.gif'), mode='I')
