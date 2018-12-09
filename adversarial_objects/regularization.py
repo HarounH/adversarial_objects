@@ -160,7 +160,7 @@ function_lookup = {
 
 
 # Contains all black and others
-DEFAULT_PRINTABLE_PIXELS = [torch.zeros((1, 3, 1, 1), dtype=torch.float)] + [torch.tensor(x, dtype=torch.float).unsqueeze(0).unsqueeze(2).unsqueeze(3) for x in itertools.combinations_with_replacement([0.1, 0.5, 0.9], 3)]
+DEFAULT_PRINTABLE_PIXELS = [torch.tensor(x, dtype=torch.float).unsqueeze(0).unsqueeze(2).unsqueeze(3) for x in itertools.combinations_with_replacement([0.1, 0.5, 0.9], 3)]
 
 
 def nps(image, printable_pixels=DEFAULT_PRINTABLE_PIXELS):
