@@ -367,7 +367,7 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         detections = model(image)
-        pdb.set_trace()
+        # pdb.set_trace()
         detections = non_max_suppression(detections, 80, 0.8, 0.4)
     # Create plot
     save_image_with_detections(image.detach()[0].cpu().numpy().transpose(1, 2, 0), detections, "noatk.png")
