@@ -14,6 +14,7 @@ def mkdir_p(path):
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
 
+seeds = [53345, 42, 1337, 80085, 8008]
 args = parser.parse_args()
 
 def create_cmd(arguments):
@@ -24,26 +25,37 @@ def create_cmd(arguments):
 
 
 def varying_regularization():
-	expt_dir = 'regularization_study_test_rand_tex/'
+	expt_dir = 'regularization_study_all/'
 	output_dir = 'output/{}'.format(expt_dir)
 	mkdir_p('adversarial_objects/'+output_dir)
-	base_arguments = '--lr 0.05 -iter 500 --adv_tex --adv_ver --output_dir {}'.format(output_dir)
-	regs = ['surface_area','aabb_volume','radius_volume','edge_length']
-	for x,i in enumerate(regs):
-		cmd = create_cmd([base_arguments,'--reg {} --output {}.png --tensorboard_dir tensorboard_{} '.format(i, i, i)])
+	for seed in seeds:
+		base_arguments = '--seed {} --lr 0.05 -iter 500 --rng_tex --adv_tex --adv_ver '.format(seed)
+		regs = ['surface_area','aabb_volume','radius_volume','edge_length']
+		for x,i in enumerate(regs):
+			opdir = output_dir+'/'+i
+			mkdir_p('adversarial_objects/'+opdir)
+			cmd = create_cmd([base_arguments,'--reg {} --output {}.png --output_dir {} --tensorboard_dir tensorboard_{}_{} '.format(i, seed, opdir, i, seed)])
+			os.system(cmd)
+		i = "fna_ad"
+		opdir = output_dir+'/'+i
+		mkdir_p('adversarial_objects/'+opdir)
+		cmd = create_cmd([base_arguments,'--fna_ad --output {}.png --output_dir {} --tensorboard_dir tensorboard_{}_{} '.format(seed, opdir, i, seed)])
 		os.system(cmd)
-	i = "fna_ad"
-	cmd = create_cmd([base_arguments,'--fna_ad --output {}.png --tensorboard_dir tensorboard_{} '.format(i, i)])
-	os.system(cmd)
-	i = "fna_ad_edge_length"
-	cmd = create_cmd([base_arguments,'--fna_ad --reg edge_length --output {}.png --tensorboard_dir tensorboard_{} '.format(i, i)])
-	os.system(cmd)
-	i = "fna_ad_edge_length_surface_area"
-	cmd = create_cmd([base_arguments,'--fna_ad --reg edge_length surface_area --output {}.png --tensorboard_dir tensorboard_{} '.format(i, i)])
-	os.system(cmd)
-	i = "fna_ad_edge_length_nps"
-	cmd = create_cmd([base_arguments,'--fna_ad --reg edge_length --nps --output {}.png --tensorboard_dir tensorboard_{} '.format(i, i)])
-	os.system(cmd)
+		i = "fna_ad_edge_length"
+		opdir = output_dir+'/'+i
+		mkdir_p('adversarial_objects/'+opdir)
+		cmd = create_cmd([base_arguments,'--fna_ad --reg edge_length --output {}.png --output_dir {} --tensorboard_dir tensorboard_{}_{} '.format(seed, opdir, i, seed)])
+		os.system(cmd)
+		i = "fna_ad_edge_length_surface_area"
+		opdir = output_dir+'/'+i
+		mkdir_p('adversarial_objects/'+opdir)
+		cmd = create_cmd([base_arguments,'--fna_ad --reg edge_length surface_area --output {}.png --output_dir {} --tensorboard_dir tensorboard_{}_{} '.format(seed, opdir, i, seed)])
+		os.system(cmd)
+		i = "fna_ad_edge_length_nps"
+		opdir = output_dir+'/'+i
+		mkdir_p('adversarial_objects/'+opdir)
+		cmd = create_cmd([base_arguments,'--fna_ad --reg edge_length --nps --output {}.png --output_dir {} --tensorboard_dir tensorboard_{}_{} '.format(seed, opdir, i, seed)])
+		os.system(cmd)
 
 def varying_targets():
 	base_arguments = '--lr 0.05 -iter 1000 --adv_tex --adv_ver'

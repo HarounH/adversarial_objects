@@ -73,7 +73,7 @@ parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # 
 parser.add_argument("--fna_ad", dest="fna_ad", default=False, action="store_true")  # noqa
 parser.add_argument("--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
 parser.add_argument("--reg_w", default=0.05, type=float, help="Weight on shape regularization")
-parser.add_argument("--scale0", default=0.05, type=float, help="Weight on shape regularization")
+parser.add_argument("--scale0", default=0.09, type=float, help="Weight on shape regularization")
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
 parser.add_argument("--scaling_clamp", default=0, type=float, help="L1 constraint on allowed scaling. Clamp applied if it is greater than 0.")
@@ -127,7 +127,7 @@ def create_affine_transform(scaling, translation, rotation):
     for i in range(3):
         scaling_matrix[i, i] = scaling[i]
     translation_matrix = torch.eye(4)
-    for i in range(1, 3):
+    for i in range(1 if args.adv_ver else 0, 3):
         translation_matrix[3, i] = translation[i]
     rotation_x = torch.eye(4)
     rotation_x[1, 1] = rotation_x[2, 2] = torch.cos(rotation[0])
@@ -178,7 +178,7 @@ if __name__ == '__main__':
         if args.adv_ver:
             parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
         if args.translation_clamp > 0:
-            translation_param = torch.tensor([0,0.02,0.02],device="cuda")*torch.randn((3,), device='cuda') + torch.tensor([0.02,  np.cos(2 * np.pi * k / args.nobj), np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
+            translation_param = torch.tensor([0,0.02,0.02],device="cuda")*torch.randn((3,), device='cuda') + torch.tensor([0.02,  5*args.scale0*np.cos(2 * np.pi * k / args.nobj), 5*args.scale0*np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
             translation_param.requires_grad_(True)
             parameters['translation{}'.format(k)] = translation_param
         if args.rotation_clamp > 0:
@@ -242,7 +242,7 @@ if __name__ == '__main__':
         # Create image
         obj_vft = stop_sign.render_parameters()
 
-
+        # pdb.set_trace()
         adv_vfts = [adv_obj.render_parameters(
             affine_transform=create_affine_transform(
                 parameters['scaling{}'.format(k)],
@@ -265,10 +265,11 @@ if __name__ == '__main__':
 
         rot_matrices = []
         for idx in range(args.bs):
-            angle = np.random.uniform(90, 90+args.training_range)
+            angle = np.random.uniform(-args.training_range, 0)
+            # pdb.set_trace()
             rotation_y = torch.eye(4)
-            rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle))
-            rotation_y[0, 2] = -torch.sin(torch.tensor(angle))
+            rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle*np.pi/180))
+            rotation_y[0, 2] = -torch.sin(torch.tensor(angle*np.pi/180))
             rotation_y[2, 0] = -rotation_y[0, 2]
             rotation_y = rotation_y.unsqueeze(0)
             rot_matrices.append(rotation_y)
@@ -303,14 +304,14 @@ if __name__ == '__main__':
         image = combine_images_in_order([bg_img, image], args)
         image = image.permute(0, 3, 1, 2) # [1, RGB, is, is]
         if args.nps:
-            loss += regularization.nps(image)
+            loss += 500*regularization.nps(image)
         if args.fna_ad:
             for k, adv_vft in enumerate(adv_vfts):
                 loss += 2*regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0])
 
-        if i % (args.max_iterations//10) ==0:
+        if i % (args.max_iterations//1) ==0:
             # pdb.set_trace()
-            for bi in range(0):
+            for bi in range(1):
                 imsave(
                     os.path.join(output_dir, "batch{}.iter{}.".format(bi, i) + args.output_filename),
                     np.transpose(image.detach().cpu().numpy()[bi], (1, 2, 0)),
@@ -331,8 +332,8 @@ if __name__ == '__main__':
         optimizer.step()
         if args.scaling_clamp>0.0:
             [parameters['scaling{}'.format(k)].data.clamp_(0.01, args.scaling_clamp) for k in range(args.nobj)]
-        if args.translation_clamp>0.0:
-            [parameters['translation{}'.format(k)].data.clamp_(- args.translation_clamp, args.translation_clamp) for k in range(args.nobj)]
+        # if args.translation_clamp>0.0:
+        #     [parameters['translation{}'.format(k)].data.clamp_(- args.translation_clamp, args.translation_clamp) for k in range(args.nobj)]
         if args.rotation_clamp>0.0:
             [parameters['rotation{}'.format(k)].data.clamp_(-args.rotation_clamp, args.rotation_clamp) for k in range(args.nobj)]
         if args.adv_tex:
@@ -344,6 +345,7 @@ if __name__ == '__main__':
             loss_handler['target_probability'][i].append(y[:, args.target_class].mean(0).sum().detach().cpu().numpy())
             loss_handler['stop_sign_probability'][i].append(y[:, ytrue_label].mean(0).sum().detach().cpu().numpy())
             loss_handler['fna_ad'][i].append(regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0]).item())
+            loss_handler['nps'][i].append(regularization.nps(image).item())
             surface_area_reg = 0.0
             for k, adv_vft in enumerate(adv_vfts):
                 surface_area_reg += (regularization.function_lookup['surface_area'](adv_vft[0], adv_vft[1]))
@@ -377,7 +379,7 @@ if __name__ == '__main__':
     correct_target = 0
     # The labels of the adversarial image from different azimuths when the detection is succesful
     adv_labels = []
-    loop = range(90 , 90 + 2*args.validation_range, 1)
+    loop = range(90 - 2*args.validation_range, 90, 1)
     # loop = tqdm.tqdm(range(0, 360, 4))
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
     writer2 = imageio.get_writer(os.path.join(output_dir, "final_cube_" + args.output_filename + '.gif'), mode='I')
@@ -415,6 +417,7 @@ if __name__ == '__main__':
         )
 
         cube_image = renderer2(*adv_vft)
+        # pdb.set_trace()
         raw_image = renderer(*obj_vft)
         adv_image = renderer(*vft)
         adv_image_big = renderer_gif(*vft)
