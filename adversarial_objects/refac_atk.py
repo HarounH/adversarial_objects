@@ -55,7 +55,7 @@ parser.add_argument("--signnames_path", default="victim_0/signnames.csv", help="
 
 parser.add_argument("-bg", "--background", dest="background", type=str, default="highway2.jpg", help="Path to background file (image)")
 parser.add_argument("-bo", "--base_object", dest="base_object", type=str, default="custom_stop_sign.obj", help="Name of .obj file containing stop sign")
-parser.add_argument("-cp", "--cube_path", dest="evil_cube_path", default="evil_cube_1.obj", help="Path to basic cube shape")
+parser.add_argument("-ap", "--attacker_path", dest="evil_cube_path", default="evil_cube_1.obj", help="Path to basic cube shape")
 
 parser.add_argument("--data_dir", type=str, default='data', help="Location where data is present")
 parser.add_argument("--tensorboard_dir", dest="tensorboard_dir", type=str, default="tensorboard", help="Subdirectory to save logs using tensorboard")  # noqa
@@ -325,7 +325,7 @@ if __name__ == '__main__':
         loss += y[:,ytrue_label].mean()
 
         if args.target_class > -1:
-            loss += (y[:,:args.target_class-1].mean(0).sum()+y[:,args.target_class+1:].mean(0).sum()-10*y[:, args.target_class].mean(0).sum())
+            loss += (y[:,:args.target_class-1].mean(0).sum()+y[:,args.target_class+1:].mean(0).sum()-10*torch.log(y[:, args.target_class]).mean(0).sum())
 
         optimizer.zero_grad()
         loss.backward()
