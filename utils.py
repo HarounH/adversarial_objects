@@ -30,3 +30,13 @@ class SignReader:
                 self.signs[int(i)] = signname
     def __getitem__(self, *args, **kwargs):
         return self.signs.__getitem__(*args, **kwargs)
+class ImagenetReader:
+    def __init__(self,filename = 'imagenet/imagenet_labels.csv'):
+        self.signs = {}
+        with open(filename,'rb') as f:
+            reader = csv.reader(f)
+            for i,signname in reader:
+                self.signs[int(i)] = signname
+    def __getitem__(self, *args, **kwargs):
+        return self.signs.__getitem__(*args, **kwargs)
+
