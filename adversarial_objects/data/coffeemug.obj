@@ -1,6 +1,6 @@
 # This file uses centimeters as units for non-parametric coordinates.
 
-mtllib evil_cube.mtl
+mtllib coffeemug.mtl
 v 3.356044 0.004986 -0.094624
 v 3.192725 0.004986 -1.125779
 v 2.718756 0.004986 -2.055996
