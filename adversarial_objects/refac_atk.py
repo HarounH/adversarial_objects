@@ -35,7 +35,7 @@ from object import Object, combine_objects
 def combine_images_in_order(image_list, args):
     result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
     for image in image_list:
-        selector = (torch.abs(image).sum(dim=2, keepdim=True) == 0).float()
+        selector = (torch.abs(image).sum(dim=-1, keepdim=True) == 0).float()
         result = result * selector + image
     # result = (result - result.min()) / (result.max() - result.min())
     return result

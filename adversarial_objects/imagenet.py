@@ -35,7 +35,7 @@ from object import Object, combine_objects
 def combine_images_in_order(image_list, args):
     result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
     for image in image_list:
-        selector = (torch.abs(image).sum(dim=2, keepdim=True) == 0).float()
+        selector = (torch.abs(image).sum(dim=-1, keepdim=True) < 1e-3).float()
         result = result * selector + image
     # result = (result - result.min()) / (result.max() - result.min())
     return result
@@ -53,15 +53,15 @@ parser.add_argument("--image_size", default=299, type=int, help="Square Image si
 parser.add_argument("--victim_name", default="inceptionv3", help="Path relative current_dir to attack model.")
 parser.add_argument("--imagenet_path", default="imagenet/imagenet_labels.csv", help="Path where the imagenet_labels.csv is located.")
 
-parser.add_argument("-bg", "--background", dest="background", type=str, default="highway2.jpg", help="Path to background file (image)")
-parser.add_argument("-bo", "--base_object", dest="base_object", type=str, default="custom_stop_sign.obj", help="Name of .obj file containing stop sign")
+parser.add_argument("-bg", "--background", dest="background", type=str, default="table.jpg", help="Path to background file (image)")
+parser.add_argument("-bo", "--base_object", dest="base_object", type=str, default="coffeemug.obj", help="Name of .obj file containing stop sign")
 parser.add_argument("-ap", "--attacker_path", dest="evil_cube_path", default="evil_cube_1.obj", help="Path to basic cube shape")
 
 parser.add_argument("--data_dir", type=str, default='data', help="Location where data is present")
 parser.add_argument("--tensorboard_dir", dest="tensorboard_dir", type=str, default="tensorboard", help="Subdirectory to save logs using tensorboard")  # noqa
 parser.add_argument("--output_dir", type=str, default='output', help="Location where data is present")
 
-parser.add_argument("-o", "--output", dest="output_filename", type=str, default="custom_stop_sign.png", help="Filename for output image")
+parser.add_argument("-o", "--output", dest="output_filename", type=str, default="custom_coffee_mug.png", help="Filename for output image")
 # Optimization
 parser.add_argument("-iter", "--max_iterations", type=int, default=100, help="Number of iterations to attack for.")
 parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at which to do steps.")
@@ -148,16 +148,17 @@ if __name__ == '__main__':
     imagenet_labels = ImagenetReader(args.imagenet_path)
     # Load background
     background = Background(os.path.join(data_dir, args.background), args.image_size)
-    background_big = Background(os.path.join(data_dir, args.background), 6*args.image_size)
+    background_big = Background(os.path.join(data_dir, args.background), 1*args.image_size)
     # Load stop-sign
-    stop_sign = Object(
+    base_object = Object(
         os.path.join(data_dir, args.base_object),
         texture_size=args.ts,
         adv_ver=False,
         adv_tex=False,
     )
-    stop_sign_translation = torch.tensor([0.0, -1.5, 0.0]).cuda()
-    stop_sign.vertices += stop_sign_translation
+    base_object.vertices -= base_object.vertices.mean(1)
+    base_object.vertices /= 6.0
+    base_object.vertices += torch.tensor([-0.5,0.0,-0.5], device = "cuda")
     # Create adversary
     parameters = {}
     adv_objs = {}
@@ -178,7 +179,7 @@ if __name__ == '__main__':
         if args.adv_ver:
             parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
         if args.translation_clamp > 0:
-            translation_param = torch.tensor([0,0.02,0.02],device="cuda")*torch.randn((3,), device='cuda') + torch.tensor([0.02,  5*args.scale0*np.cos(2 * np.pi * k / args.nobj), 5*args.scale0*np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
+            translation_param = torch.tensor([0, 0.75,0.02],device="cuda")*torch.randn((3,), device='cuda') + torch.tensor([0.02,  5*args.scale0*np.cos(2 * np.pi * k / args.nobj), 5*args.scale0*np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
             translation_param.requires_grad_(True)
             parameters['translation{}'.format(k)] = translation_param
         if args.rotation_clamp > 0:
@@ -204,18 +205,18 @@ if __name__ == '__main__':
 
     # Render into image
     renderer = nr.Renderer(camera_mode='look_at', image_size=args.image_size)
-    renderer2 = nr.Renderer(camera_mode='look_at', image_size=6*args.image_size)
-    renderer_gif = nr.Renderer(camera_mode='look_at', image_size=6*args.image_size)
+    renderer2 = nr.Renderer(camera_mode='look_at', image_size=1*args.image_size)
+    renderer_gif = nr.Renderer(camera_mode='look_at', image_size=1*args.image_size)
     camera_distance = 2.72-0.75  # Constant
     elevation = 0.0
     azimuth = 90.0
     renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
     renderer2.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
 
-    obj_image = renderer(*(stop_sign.render_parameters())) # [1, RGB, is, is]
+    obj_image = renderer(*(base_object.render_parameters())) # [1, RGB, is, is]
     obj_image = obj_image.squeeze().permute(1, 2, 0)  # [image_size, image_size, RGB]
 
-    bg_img = background.render_image().cuda()
+    bg_img = background.render_image(center_crop = True).cuda()
     image = combine_images_in_order([bg_img, obj_image], args) # [is, is, RGB]
     imsave(os.path.join(output_dir, "safe_" + args.output_filename), image.detach().cpu().numpy())
     image = image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
@@ -223,9 +224,9 @@ if __name__ == '__main__':
     victim = pretrainedmodels.__dict__[args.victim_name](num_classes=1000, pretrained='imagenet').cuda()  # nn.Module
     victim.eval()
     # Ensure that adversary is adversarial
-    ytrue = victim(image)
+    ytrue = (F.softmax(victim(image),dim=1))
     ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
-    print("Raw image classified by the classifier as: {}".format(imagenet_labels[ytrue_label]))
+    print("Raw image classified by the classifier as: {} with p: {}".format(imagenet_labels[ytrue_label], ytrue[0][ytrue_label]))
 
     if args.target_class>-1:
         print("Using a targeted attack to classify the image as: {}".format(imagenet_labels[args.target_class]))
@@ -240,7 +241,7 @@ if __name__ == '__main__':
         # TODO: Consider batching by parallelizing over renderers.
         # Sample a projection
         # Create image
-        obj_vft = stop_sign.render_parameters()
+        obj_vft = base_object.render_parameters()
 
         # pdb.set_trace()
         adv_vfts = [adv_obj.render_parameters(
@@ -300,17 +301,18 @@ if __name__ == '__main__':
 
         image = renderer(*vft)  # [bs, 3, is, is]
         image = image.squeeze().permute(0, 2, 3, 1)  # [image_size, image_size, RGB]
-        bg_img = background.render_image().cuda()
+        img2 = image 
+        bg_img = background.render_image(center_crop = True).cuda()
         image = combine_images_in_order([bg_img, image], args)
         image = image.permute(0, 3, 1, 2) # [1, RGB, is, is]
+        # pdb.set_trace()
         if args.nps:
             loss += 5*regularization.nps(image)
         if args.fna_ad:
             for k, adv_vft in enumerate(adv_vfts):
                 loss += 2*regularization.fna_ad(adv_vft[0], adv_vft[1],adv_vfts_base[k][0])
 
-        if i % (args.max_iterations//1) ==0:
-            # pdb.set_trace()
+        if i % 10 ==0:
             for bi in range(1):
                 imsave(
                     os.path.join(output_dir, "batch{}.iter{}.".format(bi, i) + args.output_filename),
@@ -390,10 +392,10 @@ if __name__ == '__main__':
     writer2 = imageio.get_writer(os.path.join(output_dir, "final_cube_" + args.output_filename + '.gif'), mode='I')
     writer3 = imageio.get_writer(os.path.join(output_dir, "hq_final_cube_" + args.output_filename + '.gif'), mode='I')
 
-    tf_gif_cube = torch.zeros([1,len(loop),3,6*args.image_size,6*args.image_size], device='cuda')
-    tf_gif = torch.zeros([1,len(loop),3,6*args.image_size,6*args.image_size], device='cuda')
-    bg_img = background.render_image().cuda()
-    bg_img_big = background_big.render_image().cuda()
+    tf_gif_cube = torch.zeros([1,len(loop),3,1*args.image_size,1*args.image_size], device='cuda')
+    tf_gif = torch.zeros([1,len(loop),3,1*args.image_size,1*args.image_size], device='cuda')
+    bg_img = background.render_image(center_crop = True).cuda()
+    bg_img_big = background_big.render_image(center_crop = True).cuda()
     for num, azimuth in enumerate(loop):
         # projection, parameters
         renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
@@ -401,7 +403,7 @@ if __name__ == '__main__':
         renderer2.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth*180.0/args.validation_range)
         # Create image
 
-        obj_vft = ((stop_sign.render_parameters())) # [1, RGB, is, is]
+        obj_vft = ((base_object.render_parameters())) # [1, RGB, is, is]
         adv_vfts = [adv_obj.render_parameters(
             affine_transform=create_affine_transform(
                 parameters['scaling{}'.format(k)],
