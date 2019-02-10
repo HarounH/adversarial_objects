@@ -50,7 +50,7 @@ import regularization
 parser = argparse.ArgumentParser()
 # Input output specifications
 parser.add_argument("--image_size", default=32, type=int, help="Square Image size that neural renderer should create for attacking.")
-parser.add_argument("--victim_path", default="victim_0/working_model_91.chk", help="Path relative current_dir to attack model.")
+parser.add_argument("--victim_path", default="victim_0/gtsrb_us_stop_signs_latest.chk", help="Path relative current_dir to attack model.")
 parser.add_argument("--signnames_path", default="victim_0/signnames.csv", help="Path where the signnames.csv is located.")
 
 parser.add_argument("-bg", "--background", dest="background", type=str, default="highway2.jpg", help="Path to background file (image)")
@@ -325,6 +325,7 @@ if __name__ == '__main__':
         loss += y[:,ytrue_label].mean()
 
         if args.target_class > -1:
+            pdb.set_trace()
             loss += (y[:,:args.target_class-1].mean(0).sum()+y[:,args.target_class+1:].mean(0).sum()-10*torch.log(y[:, args.target_class]).mean(0).sum())
 
         optimizer.zero_grad()
