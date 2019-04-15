@@ -86,10 +86,11 @@ def edge_variance(vertices, faces):
         v = []
         for i in range(faces.shape[2]):
             v.append(F.embedding(temp_f[:, i], temp_v))
-        lengths.append( (v[1] - v[0]).norm(2).mean().item())
-        lengths.append( (v[2] - v[0]).norm(2).mean().item())
-        lengths.append( (v[1] - v[2]).norm(2).mean().item())
-    return np.std(np.array(lengths))
+        lengths.append( (v[1] - v[0]).norm(2).mean())
+        lengths.append( (v[2] - v[0]).norm(2).mean())
+        lengths.append( (v[1] - v[2]).norm(2).mean())
+
+    return torch.tensor(lengths,device='cuda').var()/faces.shape[0]/faces.shape[2]
 
 def edge_length(vertices, faces):
     """

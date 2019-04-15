@@ -35,7 +35,7 @@ from object import Object, combine_objects
 def combine_images_in_order(image_list, args):
     result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
     for image in image_list:
-        selector = (torch.abs(image).sum(dim=-1, keepdim=True) < 1e-3).float()
+        selector = (torch.abs(image).sum(dim=-1, keepdim=True) < 1e-4).float()
         result = result * selector + image
     # result = (result - result.min()) / (result.max() - result.min())
     return result
@@ -45,6 +45,7 @@ from utils import LossHandler
 from utils import ImagenetReader
 import regularization
 import pretrainedmodels
+from save_obj import save_obj
 
 # parameters
 parser = argparse.ArgumentParser()
@@ -61,11 +62,11 @@ parser.add_argument("--data_dir", type=str, default='data', help="Location where
 parser.add_argument("--tensorboard_dir", dest="tensorboard_dir", type=str, default="tensorboard", help="Subdirectory to save logs using tensorboard")  # noqa
 parser.add_argument("--output_dir", type=str, default='output', help="Location where data is present")
 
-parser.add_argument("-o", "--output", dest="output_filename", type=str, default="custom_coffee_mug.png", help="Filename for output image")
+parser.add_argument("-o", "--output", dest="output_filename", type=str, default="coffee_mug.png", help="Filename for output image")
 # Optimization
 parser.add_argument("-iter", "--max_iterations", type=int, default=100, help="Number of iterations to attack for.")
 parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at which to do steps.")
-parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
+parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=0, help='Weight decay')  # noqa
 parser.add_argument("--bs", default=4, type=int, help="Batch size")
 parser.add_argument("--nobj", default=1, type=int, help="Batch size")
 # Attack specification
@@ -84,9 +85,8 @@ parser.add_argument("--ts", dest="ts",  type=int, default=2, help="Textre suze")
 parser.add_argument("--target_class", default=-1, type=int, help="Class of the target that you want the object to be classified as. Negative if not using a targeted attack")
 # Hardware
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
-
 parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
-parser.add_argument("--validation_range", default=30, type=int, help="Range over which to validate the image")
+parser.add_argument("--validation_range", default=15, type=int, help="Range over which to validate the image")
 parser.add_argument("--training_range", default=30, type=int, help="Range over which to train the image")
 
 args = parser.parse_args()
@@ -96,10 +96,11 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 data_dir = os.path.join(current_dir, args.data_dir)
 output_dir = os.path.join(current_dir, args.output_dir)
 tensorboard_dir = os.path.join(current_dir, args.output_dir, args.tensorboard_dir)
-
 try:
-    os.makedirs([output_dir, tensorboard_dir])
+    os.makedirs(output_dir)
+    os.makedirs(tensorboard_dir)
 except:
+    print(output_dir)
     pass
 
 np.random.seed(args.seed)
@@ -157,8 +158,8 @@ if __name__ == '__main__':
         adv_tex=False,
     )
     base_object.vertices -= base_object.vertices.mean(1)
-    base_object.vertices /= 6.0
-    base_object.vertices += torch.tensor([-0.5,0.0,-0.5], device = "cuda")
+    base_object.vertices /= 6.0 #0.5 #2.0 #
+    base_object.vertices += torch.tensor([-0.5,0.0,-0.5], device = "cuda") #torch.tensor([-0.1,-0.0,+0.1], device = "cuda") #torch.tensor([-0.3,-0.2,+0.1], device = "cuda") #
     # Create adversary
     parameters = {}
     adv_objs = {}
@@ -178,22 +179,25 @@ if __name__ == '__main__':
         adv_objs_base[k] = adv_obj_base
         if args.adv_ver:
             parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
+
         if args.translation_clamp > 0:
-            translation_param = torch.tensor([0, 0.75,0.02],device="cuda")*torch.randn((3,), device='cuda') + torch.tensor([0.02,  5*args.scale0*np.cos(2 * np.pi * k / args.nobj), 5*args.scale0*np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
-            translation_param.requires_grad_(True)
+            translation_param = torch.tensor([0.4,  3*args.scale0*np.cos(2 * np.pi * k / args.nobj)-0.6, 3*args.scale0*np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
+            translation_param.requires_grad_(True if args.adv_ver else False)
             parameters['translation{}'.format(k)] = translation_param
+
         if args.rotation_clamp > 0:
             rotation_param = torch.randn((3,), requires_grad=True, device='cuda')
             parameters['rotation{}'.format(k)] = rotation_param
-
         else:
             parameters['rotation{}'.format(k)] = torch.zeros((3,),requires_grad=False,device='cuda')
+
         if args.scaling_clamp > 0:
-            scaling_param = args.scale0 * (torch.ones((3,),requires_grad=False,device='cuda') + torch.rand((3,), requires_grad=False, device='cuda'))
+            scaling_param = args.scale0 * (torch.ones((3.,),requires_grad=False,device='cuda'))
             scaling_param.requires_grad_(True)
             parameters['scaling{}'.format(k)] = scaling_param
         else:
-            parameters['scaling{}'.format(k)] = torch.ones((3,),requires_grad=False,device='cuda') * args.scale0
+            parameters['scaling{}'.format(k)] = torch.ones((3.,),requires_grad=False,device='cuda') * args.scale0
+
         if args.adv_tex:
             parameters['texture{}'.format(k)] = adv_obj.textures
 
@@ -208,7 +212,7 @@ if __name__ == '__main__':
     renderer2 = nr.Renderer(camera_mode='look_at', image_size=1*args.image_size)
     renderer_gif = nr.Renderer(camera_mode='look_at', image_size=1*args.image_size)
     camera_distance = 2.72-0.75  # Constant
-    elevation = 0.0
+    elevation = 5.0
     azimuth = 90.0
     renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
     renderer2.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
@@ -218,20 +222,22 @@ if __name__ == '__main__':
 
     bg_img = background.render_image(center_crop = True).cuda()
     image = combine_images_in_order([bg_img, obj_image], args) # [is, is, RGB]
-    imsave(os.path.join(output_dir, "safe_" + args.output_filename), image.detach().cpu().numpy())
+    imsave(os.path.join(output_dir, args.output_filename), image.detach().cpu().numpy())
     image = image.unsqueeze(0).permute(0, 3, 1, 2) # [1, RGB, is, is]
     # Load model
     victim = pretrainedmodels.__dict__[args.victim_name](num_classes=1000, pretrained='imagenet').cuda()  # nn.Module
     victim.eval()
     # Ensure that adversary is adversarial
     ytrue = (F.softmax(victim(image),dim=1))
+    ##TODO(kk20): Try using multiple labels 
     ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
+    ytopk = torch.topk(ytrue,5)[1].detach().cpu().numpy()
+    #  504,  700,  999,  899,  968,  725,  505,  686,  647,  901, 438,  653,  849,  470,  720,  631,  680,  804,  844,  773,
+    #  632,  756,  969,  898,  550,  838,  828,  489,  412,  463
+    # pdb.set_trace()
     print("Raw image classified by the classifier as: {} with p: {}".format(imagenet_labels[ytrue_label], ytrue[0][ytrue_label]))
-
     if args.target_class>-1:
         print("Using a targeted attack to classify the image as: {}".format(imagenet_labels[args.target_class]))
-    # print("y: {}".format(y))
-    # print("ypred: {}".format(ypred))
 
     # Optimize loss function
     writer_tf = SummaryWriter(log_dir=tensorboard_dir)
@@ -242,8 +248,7 @@ if __name__ == '__main__':
         # Sample a projection
         # Create image
         obj_vft = base_object.render_parameters()
-
-        # pdb.set_trace()
+        
         adv_vfts = [adv_obj.render_parameters(
             affine_transform=create_affine_transform(
                 parameters['scaling{}'.format(k)],
@@ -266,7 +271,7 @@ if __name__ == '__main__':
 
         rot_matrices = []
         for idx in range(args.bs):
-            angle = np.random.uniform(-args.training_range, 0)
+            angle = np.random.uniform(-args.training_range, args.training_range)
             # pdb.set_trace()
             rotation_y = torch.eye(4)
             rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle*np.pi/180))
@@ -322,12 +327,12 @@ if __name__ == '__main__':
         # Run victim on created image.
 
         y = (F.softmax(victim(image),dim=1))
-
         # Construct Loss
         loss += y[:,ytrue_label].mean()
 
         if args.target_class > -1:
-            loss += (y[:,:args.target_class-1].mean(0).sum()+y[:,args.target_class+1:].mean(0).sum()-10*torch.log(y[:, args.target_class]).mean(0).sum())
+            # pdb.set_trace()
+            loss += y[:, ytopk].mean(0).sum()+(-10*(y[:, args.target_class]).mean(0).sum())
 
         optimizer.zero_grad()
         loss.backward()
@@ -377,6 +382,7 @@ if __name__ == '__main__':
     ###############################################
     ###############################################
     # Output
+    for top_counts in [1,2,3,4,5]:
     print(torch.argmax(y.detach()))
     # Count how many raw images are classified as the true_label
     correct_raw = 0
@@ -386,7 +392,7 @@ if __name__ == '__main__':
     correct_target = 0
     # The labels of the adversarial image from different azimuths when the detection is succesful
     adv_labels = []
-    loop = range(90 - 2*args.validation_range, 91, 1)
+    loop = range(90 - 2*args.validation_range, 90 + 2*args.validation_range, 1)
     # loop = tqdm.tqdm(range(0, 360, 4))
     writer = imageio.get_writer(os.path.join(output_dir, "final" + args.output_filename + '.gif'), mode='I')
     writer2 = imageio.get_writer(os.path.join(output_dir, "final_cube_" + args.output_filename + '.gif'), mode='I')
@@ -423,6 +429,10 @@ if __name__ == '__main__':
             [adv_vft[2] for adv_vft in adv_vfts],
         )
 
+        if num == 0:
+            save_obj('{}/printable_coffeemug.obj'.format(output_dir),adv_vft[0][0],adv_vft[1][0],adv_vft[2][0])
+        
+
         cube_image = renderer2(*adv_vft)
         # pdb.set_trace()
         raw_image = renderer(*obj_vft)
@@ -438,13 +448,12 @@ if __name__ == '__main__':
 
 
         adv_image = combine_images_in_order([bg_img, adv_image], args)
+        raw_image = combine_images_in_order([bg_img, raw_image], args)
         adv_image_big = combine_images_in_order([bg_img_big, adv_image_big], args)
 
         adv_image_ = adv_image.detach().cpu().numpy()
         adv_image_big_ = adv_image_big.detach().cpu().numpy()
         cube_image_ = cube_image.detach().cpu().numpy()
-
-
 
 
         # image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))  # [image_size, image_size, RGB]
@@ -466,25 +475,27 @@ if __name__ == '__main__':
         # Run victim on created image.
         y_adv = victim(adv_image)
         y_raw = victim(raw_image)
-        y_adv_label = torch.argmax(y_adv)
-        y_raw_label = torch.argmax(y_raw)
+        y_adv_label = torch.topk(y_adv,5)[1].detach().cpu().numpy()
+        y_raw_label = torch.topk(y_raw,5)[1].detach().cpu().numpy()
+        # pdb.set_trace()
 
-        if y_raw_label == ytrue_label:
+        if ytrue_label in y_raw_label :
             correct_raw += 1
-            adv_labels.append(y_adv_label)
-        if y_raw_label == ytrue_label and y_adv_label==ytrue_label:
+            adv_labels.append(y_adv_label[0])
+        if ytrue_label in y_raw_label and ytrue_label in y_adv_label:
             correct_adv += 1
-        if args.target_class > -1 and y_raw_label == ytrue_label and y_adv_label==args.target_class:
+        if args.target_class > -1 and ytrue_label in y_raw_label and args.target_class in y_adv_label:
             correct_target += 1
     writer.close()
     writer2.close()
+    writer3.close()
     print("Raw accuracy: {}/{} Attack accuracy: {}/{}".format(correct_raw,len(loop),correct_raw-correct_adv,correct_raw))
-    most_frequent_attack_label = int(max(set(adv_labels), key=adv_labels.count).detach().cpu().numpy())
-    print("Most frequently predicted as {}: {}, {} out of {} times ".format(
-        most_frequent_attack_label,
-        imagenet_labels[most_frequent_attack_label],
-        adv_labels.count(most_frequent_attack_label),
-        len(adv_labels)))
+    # most_frequent_attack_label = int(max(set(adv_labels), key=adv_labels.count).detach().cpu().numpy())
+    # print("Most frequently predicted as {}: {}, {} out of {} times ".format(
+    #     most_frequent_attack_label,
+    #     imagenet_labels[most_frequent_attack_label],
+    #     adv_labels.count(most_frequent_attack_label),
+    #     len(adv_labels)))
 
     if args.target_class > -1:
         print("Target attack on {}: {}, {} out of {} times ".format(
@@ -496,8 +507,8 @@ if __name__ == '__main__':
     loss_handler['raw_accuracy'][-1].append((correct_raw/(0.0+len(loop))))
     loss_handler['attack_accuracy'][-1].append(((correct_raw-correct_adv)/(0.0+correct_raw)))
     loss_handler.log_epoch(writer_tf, -1)
-    tf_gif = tf_gif.permute(0,2,1,3,4)
-    tf_gif_cube = tf_gif_cube.permute(0,2,1,3,4)
+    # tf_gif = tf_gif.permute(0,2,1,3,4)
+    # tf_gif_cube = tf_gif_cube.permute(0,2,1,3,4)
     # writer_tf.add_video("Scene_4_gif",tf_gif,fps=2)
     # writer_tf.add_video("Object_4_gif",tf_gif_cube,fps=2)
     # pdb.set_trace()

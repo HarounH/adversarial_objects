@@ -62,6 +62,7 @@ class Object(nn.Module):
             use_bilinear=True,
             normalization=False,
         )
+        # pdb.set_trace()
         if rng_tex:
             textures = 0.1 + 0.8 * torch.rand_like(textures, device='cuda')
         # Case 1: Textures are parameters
@@ -72,21 +73,23 @@ class Object(nn.Module):
 
         # Case 2: Vertices are parameters
         if adv_ver:
-            self.vertices = vertices
+            self.vertices = vertices+torch.randn(vertices.shape, device='cuda')/1000
             xvals, self.const_inds = self.vertices[:, 0].topk(3, largest=False)  # nv, 3
             _, self.var_inds = self.vertices[:, 0].topk(self.vertices.shape[0] - 3, largest=True)  # nv, 3
             var_inds = self.var_inds
             const_inds = self.const_inds
-
+            # pdb.set_trace()
             self.vertices = self.vertices - torch.tensor([xvals[0], 0.0, 0.0],device = 'cuda')
             self.vertices[const_inds[1]] -= torch.tensor([xvals[1] - xvals[0], 0.0, 0.0],device = 'cuda')
             self.vertices[const_inds[2]] -= torch.tensor([xvals[2] - xvals[0], 0.0, 0.0],device = 'cuda')
             self.vertices += torch.tensor([0.02, 0.0, 0.0],device = 'cuda')
+            # self.vertices += torch.tensor([2.0, 0.0, 0.0],device = 'cuda')
             self.vertices_constants = self.vertices[const_inds, :]
             self.vertices_vars = nn.Parameter(self.vertices[var_inds, :])
             self.vertices = torch.zeros(self.vertices.shape, dtype=torch.float, device='cuda')
             self.vertices[const_inds] = self.vertices_constants
             self.vertices[var_inds] = self.vertices_vars
+            # pdb.set_trace()
 
         self.vertices = vertices[None, :, :].cuda()
         self.faces = faces[None, :, :].cuda()
@@ -108,6 +111,7 @@ class Object(nn.Module):
 
         faces = self.faces
         textures = self.textures
+        # pdb.set_trace()
         return [vertices.cuda(), faces.cuda(), textures.cuda()]
 
 

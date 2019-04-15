@@ -23,11 +23,18 @@ class Background(nn.Module):
         self.image_size = image_size
 
     def render_image(self, center_crop = False):
-        transform = transforms.Compose([
-            transforms.CenterCrop((self.image_size, self.image_size)) if center_crop else transforms.RandomCrop((self.image_size, self.image_size)),
-            transforms.ToTensor(),
-        ])
-        data = np.transpose(transform(self.image), [1, 2, 0]).detach().numpy()
+        if center_crop:
+            data = transforms.functional.crop(self.image, (self.image.size[0]-self.image_size)//2, (self.image.size[1]-self.image_size)//2, self.image_size, self.image_size)
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+            ])
+            data = np.transpose(transform(data), [1, 2, 0]).detach().numpy()
+        else:
+            transform = transforms.Compose([
+                transforms.RandomCrop((self.image_size, self.image_size)),
+                transforms.ToTensor(),
+            ])
+            data = np.transpose(transform(self.image), [1, 2, 0]).detach().numpy()
         return torch.tensor((data - data.min()) / (data.max() - data.min()), device='cuda')
 
 

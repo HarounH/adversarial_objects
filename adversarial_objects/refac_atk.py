@@ -45,7 +45,7 @@ from tensorboardX import SummaryWriter
 from utils import LossHandler
 from utils import SignReader
 import regularization
-
+from save_obj import save_obj
 # parameters
 parser = argparse.ArgumentParser()
 # Input output specifications
@@ -63,16 +63,16 @@ parser.add_argument("--output_dir", type=str, default='output', help="Location w
 
 parser.add_argument("-o", "--output", dest="output_filename", type=str, default="custom_stop_sign.png", help="Filename for output image")
 # Optimization
-parser.add_argument("-iter", "--max_iterations", type=int, default=100, help="Number of iterations to attack for.")
+parser.add_argument("-iter", "--max_iterations", type=int, default=1000, help="Number of iterations to attack for.")
 parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at which to do steps.")
-parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
+parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=0, help='Weight decay')  # noqa
 parser.add_argument("--bs", default=4, type=int, help="Batch size")
 parser.add_argument("--nobj", default=1, type=int, help="Batch size")
 # Attack specification
 parser.add_argument("--nps", dest="nps", default=False, action="store_true")  # noqa
 parser.add_argument("--fna_ad", dest="fna_ad", default=False, action="store_true")  # noqa
 parser.add_argument("--reg", nargs='+', dest="reg", default="", type=str, choices=[""] + list(regularization.function_lookup.keys()), help="Which function to use for shape regularization")
-parser.add_argument("--reg_w", default=0.05, type=float, help="Weight on shape regularization")
+parser.add_argument("--reg_w", default=0.2, type=float, help="Weight on shape regularization")
 parser.add_argument("--scale0", default=0.15, type=float, help="Weight on shape regularization")
 parser.add_argument("--translation_clamp", default=5.0, type=float, help="L1 constraint on translation. Clamp applied if it is greater than 0.")
 parser.add_argument("--rotation_clamp", default=0, type=float, help="L1 constraint on rotation. Clamp applied if it is greater than 0.")
@@ -86,7 +86,7 @@ parser.add_argument("--target_class", default=-1, type=int, help="Class of the t
 parser.add_argument("--cuda", dest="cuda", default=False, action="store_true")  # noqa
 
 parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
-parser.add_argument("--validation_range", default=30, type=int, help="Range over which to validate the image")
+parser.add_argument("--validation_range", default=60, type=int, help="Range over which to validate the image")
 parser.add_argument("--training_range", default=30, type=int, help="Range over which to train the image")
 
 args = parser.parse_args()
@@ -96,6 +96,8 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 data_dir = os.path.join(current_dir, args.data_dir)
 output_dir = os.path.join(current_dir, args.output_dir)
 tensorboard_dir = os.path.join(current_dir, args.output_dir, args.tensorboard_dir)
+
+# (Pdb) 
 
 try:
     os.makedirs([output_dir, tensorboard_dir])
@@ -265,7 +267,8 @@ if __name__ == '__main__':
 
         rot_matrices = []
         for idx in range(args.bs):
-            angle = np.random.uniform(-args.training_range, 0)
+            # angle = np.random.uniform(-args.training_range, 0)
+            angle = -np.random.randint(15)*4
             # pdb.set_trace()
             rotation_y = torch.eye(4)
             rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle*np.pi/180))
@@ -300,7 +303,7 @@ if __name__ == '__main__':
 
         image = renderer(*vft)  # [bs, 3, is, is]
         image = image.squeeze().permute(0, 2, 3, 1)  # [image_size, image_size, RGB]
-        bg_img = background.render_image().cuda()
+        bg_img = background.render_image(center_crop=True).cuda()
         image = combine_images_in_order([bg_img, image], args)
         image = image.permute(0, 3, 1, 2) # [1, RGB, is, is]
         if args.nps:
@@ -325,7 +328,7 @@ if __name__ == '__main__':
         loss += y[:,ytrue_label].mean()
 
         if args.target_class > -1:
-            pdb.set_trace()
+            # pdb.set_trace()
             loss += (y[:,:args.target_class-1].mean(0).sum()+y[:,args.target_class+1:].mean(0).sum()-10*torch.log(y[:, args.target_class]).mean(0).sum())
 
         optimizer.zero_grad()
@@ -376,7 +379,7 @@ if __name__ == '__main__':
     ###############################################
     ###############################################
     # Output
-    print(torch.argmax(y.detach()))
+    # print(torch.argmax(y.detach()))
     # Count how many raw images are classified as the true_label
     correct_raw = 0
     # Count how many adversarial images are classified as the true_label
@@ -421,6 +424,9 @@ if __name__ == '__main__':
             [adv_vft[1] for adv_vft in adv_vfts],
             [adv_vft[2] for adv_vft in adv_vfts],
         )
+        # pdb.set_trace()
+        if num == 0:
+            save_obj('test.obj',adv_vft[0][0],adv_vft[1][0],adv_vft[2][0])
 
         cube_image = renderer2(*adv_vft)
         # pdb.set_trace()

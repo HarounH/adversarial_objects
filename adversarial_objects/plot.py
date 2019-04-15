@@ -7,7 +7,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-
+import tensorflow as tf
 from utils import SignReader
 # signnames = SignReader("victim_0/signnames.csv")
 def mkdir_p(path):
@@ -15,6 +15,45 @@ def mkdir_p(path):
         os.makedirs(path)
     except:
     	pass
+
+# def plot_imagenet(
+# 	expt_dir = None,
+# 	):
+# 	logging_dir = 'adversarial_objects/output/{}/'.format(expt_dir)
+# 	event_paths = glob.glob(os.path.join(logging_dir, "*", "tensorboard"))
+# 	tf.logging.set_verbosity(tf.logging.ERROR)
+# 	for metric in ['surface_area','fna_ad','edge_length','edge_variance', 'attack_accuracy']:
+# 		for path in event_paths:
+# 			event_acc = EventAccumulator(path)
+# 			event_acc.Reload()
+# 			try:
+# 				print(metric, event_acc.Scalars('{}'.format(metric))[-1].value, event_acc.Scalars('{}'.format(metric))[-1].step,  path.split('/')[-2], sep = ', ')
+# 			except:
+# 				print("Didnt find")
+
+
+# plot_imagenet(
+# 	expt_dir = 'regularization_experiments_adv_tex_2',
+# )
+
+
+
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+
 def plot(
 	expt_dir = None,
 	metric = None,
@@ -29,7 +68,7 @@ def plot(
 	dpi = 500,
 	matcher = 1,
 	):
-	logging_dir = 'adversarial_objects/output/{}/'.format(expt_dir)
+	logging_dir = 'adversarial_objects/output/course_expts/{}/'.format(expt_dir)
 	metric_dict = {}
 	seeds = [42, 53345, 1337, 80085, 8008]
 	plt.figure()
@@ -44,7 +83,7 @@ def plot(
 				event_paths = glob.glob(os.path.join(logging_dir, "*{}".format(wildcard), "tensorboard_{}*".format(j)))
 			elif matcher == 3:
 				event_paths = glob.glob(os.path.join(logging_dir, "{}".format(j), "tensorboard_{}*".format(j)))
-			# pdb.set_trace()
+			# pdb.set_trace()	
 			if isinstance(j,int) and j==14:
 				continue
 			metric_dict[j] = []
@@ -56,9 +95,14 @@ def plot(
 					metric_dict[j].append((event_acc.Scalars('{}'.format(metric))[0].value))
 				except:
 					print("Didnt find")
-			x.append(jidx)
-			y.append(np.mean(metric_dict[j]))
-			yerr.append(np.std(metric_dict[j]))
+			if j > 9 and j!=16:
+				x.append(jidx)
+				y.append(np.mean(metric_dict[j]))
+				yerr.append(np.std(metric_dict[j]))
+			else:
+				colors = ['-','--','-.',':']
+				colors2 = ['r','g','m','c']
+				plt.axhline(y=np.mean(metric_dict[j]), label = "{}".format(expt_list_x_label[jidx]), linewidth = 1, color = colors2[jidx-6], linestyle=colors[jidx-6])
 		if legend_labels is not None:
 			plt.errorbar(x, y, yerr=yerr, fmt = 'o', label=legend_labels[widx])
 		else:
@@ -66,11 +110,11 @@ def plot(
 	plt.xticks(x, expt_list_x_label)
 	plt.xlabel(xlabel)
 	plt.ylabel(ylabel)
-	plt.grid()
+	# plt.grid()
 	# plt.yscale("log")
 	plt.title(title)
-	if legend_labels is not None:
-		plt.legend()
+	# if legend_labels is not None:
+	plt.legend(loc=2) # 'upper left')
 	mkdir_p('adversarial_objects/plots/{}'.format(expt_dir))
 	plt.savefig('adversarial_objects/plots/{}/{}'.format(expt_dir,plotname),dpi=dpi)
 
@@ -158,10 +202,10 @@ ylabels = ['NPS','Surface Normal Deviation', 'Mean Edge Length','Variance of Edg
 plot_regularization = False
 plot_nobj = False
 plot_shapes = False
-plot_tex = True
+plot_tex = False
 plot_training_range = True
 
-if True:
+if False:
 	plot(
 		expt_dir = 'varying_targets',
 		metric = 'targeted_attack',
@@ -177,24 +221,24 @@ if True:
 	)
 	
 if plot_training_range:
-	training_range_expt_list = [0,10,20,30,45,50,60,70,80,90]
-	training_range_expt_labels = [0,10,20,30,40,50,60,70,80,90]
+	training_range_expt_list = [10,20,30,45,50,60,0,3,6,16]
+	training_range_expt_labels = ['10','20','30','40','50','60','1 fixed angle','3 fixed angles','5 fixed angles','15 fixed angles']
 	for expt_dir in ['varying_training_range']:
-		titles = ['Effect of training range' for i in range(len(ylabels))]
-		for idx in range(len(metrics)):
-			plot_lines(
-				expt_dir = expt_dir,
-				metric = metrics[idx],
-				expt_list = training_range_expt_list,
-				expt_list_x_label = None,
-				wildcards = [''],
-				legend_labels = training_range_expt_labels,
-				xlabel = 'Iterations',
-				ylabel = ylabels[idx],
-				title = titles[idx],
-				plotname = '{}.png'.format(metrics[idx]),
-				dpi = 500,
-			)
+		titles = ['Attack Success Rate' for i in range(len(ylabels))]
+		# for idx in range(len(metrics)):
+		# 	plot_lines(
+		# 		expt_dir = expt_dir,
+		# 		metric = metrics[idx],
+		# 		expt_list = training_range_expt_list,
+		# 		expt_list_x_label = None,
+		# 		wildcards = [''],
+		# 		legend_labels = training_range_expt_labels,
+		# 		xlabel = 'Iterations',
+		# 		ylabel = ylabels[idx],
+		# 		title = titles[idx],
+		# 		plotname = '{}.png'.format(metrics[idx]),
+		# 		dpi = 500,
+		# 	)
 		plot(
 			expt_dir = expt_dir,
 			metric = 'attack_accuracy',
@@ -203,8 +247,8 @@ if plot_training_range:
 			wildcards = ['*'],
 			legend_labels = None,
 			xlabel = 'Training Range',
-			ylabel = titles[0],
-			title = "titles[0]",
+			ylabel = 'Attack Success Rate',
+			title = "Effect of varying training range",
 			plotname = 'training_range_attack_acc.png',
 			dpi = 500,
 		)
