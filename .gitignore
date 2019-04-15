@@ -1,6 +1,7 @@
 examples/data/stop_sign/*
 output/*
 adversarial_objects/output
+adversarial_objects/data/coffeemug*
 yolo_v3/output/*
 yolo_v3/data/*
 yolo_v3/weights/*.weights

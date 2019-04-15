@@ -10,7 +10,7 @@ def test_all():
     test_suite = test_loader.discover('tests', pattern='test_*.py')
     return test_suite
 
-ext_modules=[
+ext_modules = [
     CUDAExtension('neural_renderer.cuda.load_textures', [
         'neural_renderer/cuda/load_textures_cuda.cpp',
         'neural_renderer/cuda/load_textures_cuda_kernel.cu',

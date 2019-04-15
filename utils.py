@@ -20,8 +20,9 @@ class LossHandler:
                     print("{}[{}]: {}".format(k, epoch, np.mean(v[epoch])))
                 writer.add_scalar(k, np.mean(v[epoch]), epoch)
 
+
 class SignReader:
-    def __init__(self,filename = 'victim_0/signnames.csv'):
+    def __init__(self, filename='victim_0/signnames.csv'):
         self.signs = {}
         with open(filename,'rb') as f:
             reader = csv.reader(f)
@@ -31,8 +32,9 @@ class SignReader:
     def __getitem__(self, *args, **kwargs):
         return self.signs.__getitem__(*args, **kwargs)
 
+
 class ImagenetReader:
-    def __init__(self,filename = 'imagenet/imagenet_labels.csv'):
+    def __init__(self, filename='imagenet/imagenet_labels.csv'):
         self.signs = {}
         with open(filename,'rb') as f:
             reader = csv.reader(f)
@@ -40,4 +42,3 @@ class ImagenetReader:
                 self.signs[int(i)] = signname
     def __getitem__(self, *args, **kwargs):
         return self.signs.__getitem__(*args, **kwargs)
-

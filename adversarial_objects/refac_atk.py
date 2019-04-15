@@ -97,7 +97,7 @@ data_dir = os.path.join(current_dir, args.data_dir)
 output_dir = os.path.join(current_dir, args.output_dir)
 tensorboard_dir = os.path.join(current_dir, args.output_dir, args.tensorboard_dir)
 
-# (Pdb) 
+# (Pdb)
 
 try:
     os.makedirs([output_dir, tensorboard_dir])
@@ -180,7 +180,14 @@ if __name__ == '__main__':
         if args.adv_ver:
             parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
         if args.translation_clamp > 0:
-            translation_param = torch.tensor([0,0.02,0.02],device="cuda")*torch.randn((3,), device='cuda') + torch.tensor([0.02,  5*args.scale0*np.cos(2 * np.pi * k / args.nobj), 5*args.scale0*np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
+            translation_param = (
+                torch.tensor([0,0.02,0.02],device="cuda") * torch.randn((3,), device='cuda')
+                + torch.tensor([
+                    0.02,
+                    5*args.scale0*np.cos(2 * np.pi * k / args.nobj),
+                    5*args.scale0*np.sin(2 * np.pi * k / args.nobj)
+                ], dtype=torch.float, device='cuda')
+            )
             translation_param.requires_grad_(True)
             parameters['translation{}'.format(k)] = translation_param
         if args.rotation_clamp > 0:

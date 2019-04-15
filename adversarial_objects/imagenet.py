@@ -159,7 +159,7 @@ if __name__ == '__main__':
     )
     base_object.vertices -= base_object.vertices.mean(1)
     base_object.vertices /= 6.0 #0.5 #2.0 #
-    base_object.vertices += torch.tensor([-0.5,0.0,-0.5], device = "cuda") #torch.tensor([-0.1,-0.0,+0.1], device = "cuda") #torch.tensor([-0.3,-0.2,+0.1], device = "cuda") #
+    base_object.vertices += torch.tensor([-0.5,0.0,-0.5], device="cuda") #torch.tensor([-0.1,-0.0,+0.1], device = "cuda") #torch.tensor([-0.3,-0.2,+0.1], device = "cuda") #
     # Create adversary
     parameters = {}
     adv_objs = {}
@@ -181,7 +181,11 @@ if __name__ == '__main__':
             parameters['vertices{}'.format(k)] = adv_obj.vertices_vars
 
         if args.translation_clamp > 0:
-            translation_param = torch.tensor([0.4,  3*args.scale0*np.cos(2 * np.pi * k / args.nobj)-0.6, 3*args.scale0*np.sin(2 * np.pi * k / args.nobj)], dtype=torch.float, device='cuda')
+            translation_param = torch.tensor([
+                0.4,
+                3 * args.scale0 * np.cos(2 * np.pi * k / args.nobj) - 0.6,
+                3 * args.scale0*np.sin(2 * np.pi * k / args.nobj)
+                ], dtype=torch.float, device='cuda')
             translation_param.requires_grad_(True if args.adv_ver else False)
             parameters['translation{}'.format(k)] = translation_param
 
@@ -229,7 +233,7 @@ if __name__ == '__main__':
     victim.eval()
     # Ensure that adversary is adversarial
     ytrue = (F.softmax(victim(image),dim=1))
-    ##TODO(kk20): Try using multiple labels 
+    ##TODO(kk20): Try using multiple labels
     ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
     ytopk = torch.topk(ytrue,5)[1].detach().cpu().numpy()
     #  504,  700,  999,  899,  968,  725,  505,  686,  647,  901, 438,  653,  849,  470,  720,  631,  680,  804,  844,  773,
@@ -248,7 +252,7 @@ if __name__ == '__main__':
         # Sample a projection
         # Create image
         obj_vft = base_object.render_parameters()
-        
+
         adv_vfts = [adv_obj.render_parameters(
             affine_transform=create_affine_transform(
                 parameters['scaling{}'.format(k)],
@@ -306,7 +310,7 @@ if __name__ == '__main__':
 
         image = renderer(*vft)  # [bs, 3, is, is]
         image = image.squeeze().permute(0, 2, 3, 1)  # [image_size, image_size, RGB]
-        img2 = image 
+        img2 = image
         bg_img = background.render_image(center_crop = True).cuda()
         image = combine_images_in_order([bg_img, image], args)
         image = image.permute(0, 3, 1, 2) # [1, RGB, is, is]
@@ -431,7 +435,7 @@ if __name__ == '__main__':
 
         if num == 0:
             save_obj('{}/printable_coffeemug.obj'.format(output_dir),adv_vft[0][0],adv_vft[1][0],adv_vft[2][0])
-        
+
 
         cube_image = renderer2(*adv_vft)
         # pdb.set_trace()
