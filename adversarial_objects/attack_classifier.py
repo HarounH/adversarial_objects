@@ -230,7 +230,7 @@ def test(
         gif_tensors = []
         gif_tensors_big = []
         gif_tensors_adversary = []
-        print('Starting elevation={}/{}'.format(elevation, args.max_validation_elevation_delta))
+        print('Starting elevation iter {}/{}'.format(num_elevation, len(elevation_loop)))
         for num, azimuth in enumerate(loop):
             adv_vfts = [adv_obj.render_parameters(
                 affine_transform=wavefront.create_affine_transform(
@@ -307,7 +307,7 @@ def test(
     for k in TOP_COUNTS:
         print("########")
         print("TOP-{}".format(k))
-        print("Raw accuracy:{}".format(correct_raw[k] / (0.0 + len(loop))))
+        print("Raw accuracy:{}".format(correct_raw[k] / (len(elevation_loop) * len(loop))))
         print("Attack accuracy:{}".format((correct_raw[k] - correct_adv[k]) / (0.0 + correct_raw[k])))
 
         if args.target_class > -1:
@@ -318,7 +318,7 @@ def test(
                 correct_raw[k]))
             loss_handler['targeted_attack'][top_counts].append(correct_target[k] / (0.0 + correct_raw[k]))
 
-        loss_handler['raw_accuracy'][k].append((correct_raw[k] / (0.0 + len(loop))))
+        loss_handler['raw_accuracy'][k].append((correct_raw[k] / (len(elevation_loop) * len(loop))))
         loss_handler['attack_accuracy'][k].append(((correct_raw[k] - correct_adv[k])/(0.0 + correct_raw[k])))
         loss_handler['correct_raw'][k].append(((correct_raw[k])))
         loss_handler['correct_adv'][k].append(((correct_adv[k])))
@@ -452,12 +452,12 @@ def train(
             loss_handler.log_epoch(writer_tf, i)
         if i % PHOTO_EVERY == 0:
             utils.save_torch_image(
-                os.path.join(args.output_dir, '{}.png'.format(i)), image[0])
+                os.path.join(args.output_dir, 'training_iter{}.png'.format(i)), image[0])
             bg_img_hq = bg_big.render_image(center_crop=center_crops[args.scene_name], batch_size=batch_size)
             image_hq = renderer_high_res(*vft)  # [bs, 3, is, is]
-            image_hq = combiner.combine_images_in_order([image_hq, bg_img_hq], image_hq.shape)
+            image_hq = combiner.combine_images_in_order([bg_img_hq, image_hq], image_hq.shape)
             utils.save_torch_image(
-                os.path.join(args.output_dir, '{}_hq.png'.format(i)), image_hq[0])
+                os.path.join(args.output_dir, 'training_iter{}_hq.png'.format(i)), image_hq[0])
 
 
 def main():
