@@ -70,7 +70,7 @@ class Object(nn.Module):
         textures = self.textures
         return [vertices.cuda(), faces.cuda(), textures.cuda()]
 
-    def init_parameters(self, args):
+    def init_parameters(self, args, k):
         parameters = {}
         if args.adv_ver:
             parameters['vertices'] = self.vertices_vars
@@ -89,8 +89,8 @@ class Object(nn.Module):
                     torch.tensor([0,0.02,0.02], device="cuda") * torch.randn((3,), device='cuda')
                     + torch.tensor([
                         0.02,
-                        5*args.scale0*np.cos(2 * np.pi * k / args.nobj),
-                        5*args.scale0*np.sin(2 * np.pi * k / args.nobj)
+                        5 * args.scale0*np.cos(2 * np.pi * k / args.nobj),
+                        5 * args.scale0*np.sin(2 * np.pi * k / args.nobj)
                     ], dtype=torch.float, device='cuda')
                 )
             else:
@@ -109,11 +109,11 @@ class Object(nn.Module):
             parameters['rotation'] = torch.zeros((3,), requires_grad=False, device='cuda')
 
         if args.scaling_clamp > 0:
-            scaling_param = args.scale0 * (torch.ones((3.,), requires_grad=False, device='cuda'))
+            scaling_param = args.scale0 * (torch.ones((3,), requires_grad=False, device='cuda'))
             scaling_param.requires_grad_(True)
             parameters['scaling'] = scaling_param
         else:
-            parameters['scaling'] = torch.ones((3.,), requires_grad=False, device='cuda') * args.scale0
+            parameters['scaling'] = torch.ones((3,), requires_grad=False, device='cuda') * args.scale0
         return parameters
 
 
@@ -177,7 +177,7 @@ def create_affine_transform(scaling, translation, rotation, adv_ver):
     return scaling_matrix.mm(rotation_y.mm(rotation_z.mm(rotation_x.mm(translation_matrix))))
 
 
-def prepare_y_rotated_batch(vft):
+def prepare_y_rotated_batch(vft, batch_size, rot_matrices):
     new_v = torch.bmm(
         torch.cat(
             (

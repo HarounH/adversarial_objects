@@ -17,7 +17,7 @@ def combine_objects(vs, fs, ts, cat_fn=lambda ls: torch.cat(ls, dim=1)):
 
 
 def combine_images_in_order(image_list, output_shape, color_dim=1, eps=0.0, normalize_result=False):
-    results = torch.zeros(output_shape, dtype=torch.float, device='cuda')
+    result = torch.zeros(output_shape, dtype=torch.float, device='cuda')
     # result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
     for image in image_list:
         selector = (torch.abs(image).sum(dim=color_dim, keepdim=True) <= eps).float()

@@ -3,6 +3,7 @@ import numpy as np
 import csv
 from skimage.io import imread, imsave
 import imageio
+import torch
 
 
 def create_rotation_y(angle):
@@ -17,7 +18,7 @@ def create_rotation_y(angle):
 def save_torch_image(path, tensor):
     ''' One tensor in (RGB, H, W) format.
     '''
-    assert len(tensor.shape == 3)
+    assert (len(tensor.shape) == 3)
     imsave(path, tensor.permute(1, 2, 0).detach().cpu().numpy())
 
 
@@ -55,9 +56,9 @@ class LossHandler:
 
 
 class SignReader:
-    def __init__(self, filename='victim_0/signnames.csv'):
+    def __init__(self, filename='victim_0/signnames.csv', reader_mode='rb'):
         self.signs = {}
-        with open(filename,'rb') as f:
+        with open(filename, reader_mode) as f:
             reader = csv.reader(f)
             header = next(reader)
             for i,signname in reader:
@@ -67,9 +68,9 @@ class SignReader:
 
 
 class ImagenetReader:
-    def __init__(self, filename='imagenet/imagenet_labels.csv'):
+    def __init__(self, filename='imagenet/imagenet_labels.csv', reader_mode='rb'):
         self.signs = {}
-        with open(filename,'rb') as f:
+        with open(filename, reader_mode) as f:
             reader = csv.reader(f)
             for i,signname in reader:
                 self.signs[int(i)] = signname

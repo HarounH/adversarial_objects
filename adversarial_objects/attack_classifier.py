@@ -26,6 +26,7 @@ from tensorboardX import SummaryWriter
 # NR
 import neural_renderer as nr
 # Custom imports
+from save_obj import save_obj
 from modules import (
     background,
     wavefront,
@@ -36,7 +37,7 @@ from modules import (
 )
 import utils
 from victim_0.network import get_victim
-
+import pretrainedmodels
 
 PHOTO_EVERY = 100
 EVAL_EVERY = 1
@@ -50,22 +51,21 @@ center_crops = {
 
 def get_imagenet_constructor(name):
     def get_imagenet(*args, **kwargs):
-        pretrainedmodels.__dict__[name](num_classes=1000, pretrained='imagenet')
-        return model
+        return pretrainedmodels.__dict__[name](num_classes=1000, pretrained='imagenet')
     return get_imagenet
 
 
 classifiers = {
     'inceptionv3': [
         get_imagenet_constructor('inceptionv3'),
-        utils.ImagenetReader,
+        lambda x: utils.ImagenetReader(x, reader_mode='r'),
         '',
         'imagenet/imagenet_labels.csv',
         299,
     ],
     'gtsrb': [
         get_victim,
-        utils.SignReader,
+        lambda x: utils.SignReader(x, reader_mode='r'),
         'victim_0/gtsrb_us_stop_signs_latest.chk',
         'victim_0/signnames.csv',
         32
@@ -74,12 +74,12 @@ classifiers = {
 
 
 def get_classifier(classifier_name, path_='', labels_path_=''):
-    fn, label_reader, path, labels_path, img_size = *(classifiers[classifier_name])
+    fn, label_reader, path, labels_path, img_size = tuple(classifiers[classifier_name])
     if path_ != '':
         path = path_
     if labels_path_ != '':
         labels_path = labels_path_
-    return fn(path).eval().cuda(), label_reader(labels_path)
+    return fn(path).eval().cuda(), label_reader(labels_path), img_size
 
 
 def get_args():
@@ -113,21 +113,23 @@ def get_args():
     # Training specification
     parser.add_argument("--validation_range", default=60, type=int, help="Range over which to validate the image")
     parser.add_argument("--training_range", default=30, type=int, help="Range over which to train the image")
-    parser.add_argument("-el_min", "--min_training_elevation_delta", default=0.0, help="")
+    parser.add_argument("-el_min", "--min_training_elevation_delta", default=0, type=int, help="")
+    parser.add_argument("-el_max", "--max_training_elevation_delta", default=5, type=int, help="")
+    parser.add_argument("-el_val_min", "--min_validation_elevation_delta", default=0, type=int, help="")
+    parser.add_argument("-el_val_max", "--max_validation_elevation_delta", default=50, type=int, help="")
 
 
     parser.add_argument("-iter", "--max_iterations", type=int, default=100, help="Number of iterations to attack for.")
     parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at which to do steps.")
     parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
-    parser.add_argument("--bs", default=4, type=int, help="Batch size")
+    parser.add_argument("-b", "--bs", dest="batch_size", default=4, type=int, help="Batch size")
 
     # Output
     parser.add_argument("--seed", default=1337, type=int, help="Seed for numpy and pytorch")
-    parser.add_argument("--data_dir", type=str, default='data', help="Location where data is present")
-    parser.add_argument("--base_output", dest="base_output", default="./new_output/", help="Directory which will have folders per run")  # noqa
+    parser.add_argument("--data_dir", type=str, default='adversarial_objects/data', help="Location where data is present")
+    parser.add_argument("--base_output", dest="base_output", default="adversarial_objects/new_output/", help="Directory which will have folders per run")  # noqa
     parser.add_argument("-r", "--run", dest='run_code', type=str, default='', help='Name this run. It will be a folder in the output directory')  # noqa
     parser.add_argument("--tensorboard_dir", dest="tensorboard_dir", type=str, default="tensorboard", help="Subdirectory to save logs using tensorboard")  # noqa
-    parser.add_argument("--output_dir", type=str, default='output', help="Location where data is present")
     parser.add_argument('-o', '--output_dir', default='', help='Specify to override run code mechanism')
 
     args = parser.parse_args()
@@ -137,8 +139,6 @@ def get_args():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
-    if args.debug:
-        args.run_code = "debug"
     os.makedirs(args.base_output, exist_ok=True)
     if len(args.run_code) == 0:
         # Generate a run code by counting number of directories in oututs
@@ -207,7 +207,6 @@ def test(
         bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
         base_image = renderer(*(obj_vft))  # 1, 3, is, is
         base_image = combiner.combine_images_in_order([bg_img, base_image], bg_img.shape)
-        utils.save_torch_image(os.path.join(args.output_dir, 'original_image'), base_image[0])
 
         ytrue = (F.softmax(model(base_image),dim=1))
         ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
@@ -216,7 +215,11 @@ def test(
     loop = range(90 - 2 * args.validation_range,
                  90 + 2 * args.validation_range,
                  2)
-    elevation_loop = range(5, 5 + args.validation_range, 2)
+    elevation_loop = np.linspace(
+        (elevation + args.min_validation_elevation_delta),
+        elevation + args.max_validation_elevation_delta,
+        num=((args.max_validation_elevation_delta
+              - args.min_validation_elevation_delta) // 2))
 
     correct_raw = {i: 0 for i in TOP_COUNTS}
     correct_adv = {i: 0 for i in TOP_COUNTS}
@@ -227,13 +230,14 @@ def test(
         gif_tensors = []
         gif_tensors_big = []
         gif_tensors_adversary = []
-
+        print('Starting elevation={}/{}'.format(elevation, args.max_validation_elevation_delta))
         for num, azimuth in enumerate(loop):
             adv_vfts = [adv_obj.render_parameters(
                 affine_transform=wavefront.create_affine_transform(
                     parameters['scaling{}'.format(k)],
                     parameters['translation{}'.format(k)],
                     parameters['rotation{}'.format(k)],
+                    args.adv_ver,
                 )) for k, adv_obj in adv_objs.items()]
 
             vft = combiner.combine_objects(
@@ -287,17 +291,17 @@ def test(
             os.path.join(
                 args.output_dir,
                 '{}_and_{}{}_ele{}.gif'.format(args.scene_name, args.nobj, args.attacker_name, elevation)),
-            gif_tensors)
+            torch.cat(gif_tensors, dim=0))
         utils.save_torch_gif(
             os.path.join(
                 args.output_dir,
                 '{}_and_{}{}_ele{}_hq.gif'.format(args.scene_name, args.nobj, args.attacker_name, elevation)),
-            gif_tensors_big)
+            torch.cat(gif_tensors_big, dim=0))
         utils.save_torch_gif(
             os.path.join(
                 args.output_dir,
                 '{}{}_ele{}.gif'.format(args.nobj, args.attacker_name, elevation)),
-            gif_tensors_adversary)
+            torch.cat(gif_tensors_adversary, dim=0))
 
     # Report metrics
     for k in TOP_COUNTS:
@@ -344,7 +348,7 @@ def train(
         bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
         base_image = renderer(*(obj_vft))  # 1, 3, is, is
         base_image = combiner.combine_images_in_order([bg_img, base_image], bg_img.shape)
-        utils.save_torch_image(os.path.join(args.output_dir, 'original_image'), base_image[0])
+        utils.save_torch_image(os.path.join(args.output_dir, 'original_image.png'), base_image[0])
 
         ytrue = (F.softmax(model(base_image),dim=1))
         ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
@@ -361,7 +365,7 @@ def train(
         weight_decay=args.weight_decay
     )
 
-    batch_size = args.bs
+    batch_size = args.batch_size
     for i in range(args.max_iterations):
         # Forward pass
         # obj_vft is alreay defined
@@ -370,19 +374,21 @@ def train(
                 parameters['scaling{}'.format(k)],
                 parameters['translation{}'.format(k)],
                 parameters['rotation{}'.format(k)],
+                args.adv_ver,
             )) for k, adv_obj in adv_objs.items()]
 
         vft = combiner.combine_objects(
             *([[obj_vft[i]] + [adv_vft[i] for adv_vft in adv_vfts] for i in range(3)])
         )
 
-        if args.batch_size > 1:
+        if batch_size > 1:
             rot_matrices = []
             for idx in range(batch_size):  # batch_size=1 works really.
                 angle = np.random.uniform(-args.training_range, args.training_range)
                 rot_matrices.append(utils.create_rotation_y(angle))
             rot_matrices = torch.cat(rot_matrices).cuda()
-            vft = wavefront.prepare_y_rotated_batch(vft)
+            vft = wavefront.prepare_y_rotated_batch(vft, batch_size, rot_matrices)
+            delta_azimuth = 0.0
         else:
             # projection, parameters
             delta_azimuth = np.random.uniform(-args.max_training_azimuth_deviation, args.max_training_azimuth_deviation)
@@ -393,9 +399,6 @@ def train(
             elevation + delta_elevation,
             azimuth + delta_azimuth
         )
-
-        for i in range(5):
-            print('Warning: sampling azimuth etc is not implemented?')
 
         image = renderer(*vft)  # [bs, 3, is, is]
         bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=batch_size)
@@ -413,6 +416,7 @@ def train(
                 parameters['scaling{}'.format(k)],
                 parameters['translation{}'.format(k)],
                 parameters['rotation{}'.format(k)],
+                args.adv_ver,
             )) for k, adv_obj_base in adv_objs_base.items()]
 
         if args.nps:
@@ -451,7 +455,7 @@ def train(
                 os.path.join(args.output_dir, '{}.png'.format(i)), image[0])
             bg_img_hq = bg_big.render_image(center_crop=center_crops[args.scene_name], batch_size=batch_size)
             image_hq = renderer_high_res(*vft)  # [bs, 3, is, is]
-            image_hq = combiner.combine_images_in_order([image_hq, bg_img_hq], image.shape)
+            image_hq = combiner.combine_images_in_order([image_hq, bg_img_hq], image_hq.shape)
             utils.save_torch_image(
                 os.path.join(args.output_dir, '{}_hq.png'.format(i)), image_hq[0])
 
@@ -460,9 +464,10 @@ def main():
     args = get_args()
     # Get classifiers
     model, label_names, img_size = get_classifier(args.classifier, args.classifier_path, args.labels_path)
+    args.image_size = img_size
     # Instantiate objects
-    bg = background.Background(args.background, img_size)
-    bg_big = background.Background(args.background, HIGH_RES)
+    bg = background.Background(os.path.join(args.data_dir, args.background), img_size)
+    bg_big = background.Background(os.path.join(args.data_dir, args.background), HIGH_RES)
     base_object = wavefront.load_obj(args.scene_name, texture_size=args.ts)
 
     # Initialize objects
@@ -478,13 +483,13 @@ def main():
             rng_tex=args.rng_tex,
         )
         adv_obj_base = wavefront.load_obj(
-            os.path.join(data_dir, args.evil_cube_path),
+            args.attacker_name,
         )
         adv_objs[k] = adv_obj
         adv_objs_base[k] = adv_obj_base
 
-        for param_name, v in adv_obj.init_parameters(args).items():
-            parameters['{}_{}'.format(param_name, k)] = v
+        for param_name, v in adv_obj.init_parameters(args, k).items():
+            parameters['{}{}'.format(param_name, k)] = v
 
     writer_tf = SummaryWriter(log_dir=args.tensorboard_dir)
     loss_handler = utils.LossHandler()
