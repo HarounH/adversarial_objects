@@ -114,6 +114,7 @@ class Object(nn.Module):
             parameters['scaling'] = scaling_param
         else:
             parameters['scaling'] = torch.ones((3.,), requires_grad=False, device='cuda') * args.scale0
+        return parameters
 
 
 def prep_stop_sign(stop_sign):
@@ -141,7 +142,7 @@ objects_dict = {
 
 
 def load_obj(obj_name, prep_fn_=None, *args, **kwargs):
-    path, prep_fn = *objects_dict[obj_name]
+    path, prep_fn = tuple(objects_dict[obj_name])
 
     if prep_fn_ is not None:
         prep_fn = prep_fn_
@@ -152,3 +153,41 @@ def load_obj(obj_name, prep_fn_=None, *args, **kwargs):
     with torch.no_grad():
         obj = Object(path, *args, **kwargs)
     return prep_fn(obj)
+
+
+def create_affine_transform(scaling, translation, rotation, adv_ver):
+    scaling_matrix = torch.eye(4)
+    for i in range(3):
+        scaling_matrix[i, i] = scaling[i]
+    translation_matrix = torch.eye(4)
+    for i in range(1 if adv_ver else 0, 3):
+        translation_matrix[3, i] = translation[i]
+    rotation_x = torch.eye(4)
+    rotation_x[1, 1] = rotation_x[2, 2] = torch.cos(rotation[0])
+    rotation_x[1, 2] = torch.sin(rotation[0])
+    rotation_x[2, 1] = -rotation_x[1, 2]
+    rotation_y = torch.eye(4)
+    rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(rotation[1])
+    rotation_y[0, 2] = -torch.sin(rotation[1])
+    rotation_y[2, 0] = -rotation_y[0, 2]
+    rotation_z = torch.eye(4)
+    rotation_z[0, 0] = rotation_z[1, 1] = torch.cos(rotation[2])
+    rotation_z[0, 1] = torch.sin(rotation[2])
+    rotation_z[1, 0] = -rotation_z[0, 1]
+    return scaling_matrix.mm(rotation_y.mm(rotation_z.mm(rotation_x.mm(translation_matrix))))
+
+
+def prepare_y_rotated_batch(vft):
+    new_v = torch.bmm(
+        torch.cat(
+            (
+                vft[0].expand(batch_size, *(vft[0].shape[1:])),
+                torch.ones(([batch_size] + list(vft[0].shape[1:-1]) + [1])).float().cuda(),
+            ),
+            dim=2),
+        rot_matrices,
+    )[:, :, :3]
+
+    new_f = vft[1].expand(batch_size, *(vft[1].shape[1:]))
+    new_t = vft[2].expand(batch_size, *(vft[2].shape[1:]))
+    return [new_v, new_f, new_t]

@@ -351,7 +351,7 @@ if __name__ == '__main__':
             [parameters['texture{}'.format(k)].data.clamp_(-0.9, 0.9) for k in range(args.nobj)]
 
         # Print out the loss
-        if i%1==0:
+        if i % 1 == 0:
             loss_handler['loss'][i].append(loss.item())
             loss_handler['target_probability'][i].append(y[:, args.target_class].mean(0).sum().detach().cpu().numpy())
             loss_handler['initial_class_probability'][i].append(y[:, ytrue_label].mean(0).sum().detach().cpu().numpy())

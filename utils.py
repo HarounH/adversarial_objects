@@ -1,6 +1,39 @@
 from collections import defaultdict
 import numpy as np
 import csv
+from skimage.io import imread, imsave
+import imageio
+
+
+def create_rotation_y(angle):
+    rotation_y = torch.eye(4)
+    rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle*np.pi/180))
+    rotation_y[0, 2] = -torch.sin(torch.tensor(angle*np.pi/180))
+    rotation_y[2, 0] = -rotation_y[0, 2]
+    rotation_y = rotation_y.unsqueeze(0)
+    return rotation_y
+
+
+def save_torch_image(path, tensor):
+    ''' One tensor in (RGB, H, W) format.
+    '''
+    assert len(tensor.shape == 3)
+    imsave(path, tensor.permute(1, 2, 0).detach().cpu().numpy())
+
+
+def save_torch_gif(path, tensors):
+    ''' List of images in (RGB, H, W) format/shape
+    '''
+    assert(len(tensors[0].shape) == 3)
+    N = len(tensors) if isinstance(tensors, list) else tensors.shape[0]
+    writer = imageio.get_writer(path, mode='I')
+    for i in range(N):
+        writer.append_data((
+            255 * tensors[i].detach().cpu().permute(1, 2, 0).numpy()
+        ).astype(np.uint8))
+    writer.close()
+
+
 class LossHandler:
     def __init__(self, print_every=1):
         # name -> epoch -> list (per batch)

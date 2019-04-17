@@ -16,7 +16,7 @@ def combine_objects(vs, fs, ts, cat_fn=lambda ls: torch.cat(ls, dim=1)):
     return [v, f, t]
 
 
-def combine_images_in_order(image_list, output_shape, color_dim=-1, eps=0.0, normalize_result=False):
+def combine_images_in_order(image_list, output_shape, color_dim=1, eps=0.0, normalize_result=False):
     results = torch.zeros(output_shape, dtype=torch.float, device='cuda')
     # result = torch.zeros(image_list[0].shape, dtype=torch.float, device='cuda')
     for image in image_list:

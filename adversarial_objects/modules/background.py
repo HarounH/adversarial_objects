@@ -17,8 +17,8 @@ class Background(nn.Module):
             transforms.CenterCrop((self.image_size, self.image_size)) if center_crop else transforms.RandomCrop((self.image_size, self.image_size)),
             transforms.ToTensor(),
         ])
-        data = np.transpose(transform(self.image), [1, 2, 0]).detach().numpy()
-        data = torch.tensor((data - data.min()) / (data.max() - data.min()), device='cuda')
+        data = transform(self.image)
         if batch_size is not None:
             data = data.view(1, *data.shape).expand(batch_size, *data.shape)
+        data = torch.tensor((data - data.min()) / (data.max() - data.min()), device='cuda')
         return data
