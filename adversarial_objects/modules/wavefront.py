@@ -71,6 +71,7 @@ class Object(nn.Module):
         return [vertices.cuda(), faces.cuda(), textures.cuda()]
 
     def init_parameters(self, args, k):
+        assert (self.adv_ver or self.adv_tex), "init_parameters was called on non-adversarial object"
         parameters = {}
         if args.adv_ver:
             parameters['vertices'] = self.vertices_vars
@@ -93,6 +94,9 @@ class Object(nn.Module):
                         5 * args.scale0*np.sin(2 * np.pi * k / args.nobj)
                     ], dtype=torch.float, device='cuda')
                 )
+            elif args.scene_name.startswith('shapenet'):
+                raise NotImplementedError('Implement initialization \
+                                          of shapenet models')
             else:
                 raise NotImplementedError(
                     'Implement initialization of parameters in \

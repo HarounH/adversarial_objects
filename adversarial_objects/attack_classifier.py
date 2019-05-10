@@ -327,6 +327,7 @@ def test(
         print("########")
         print("########")
 
+
 def train(
         args,
         bg=None,
@@ -338,7 +339,7 @@ def train(
         bg_big=None,
         adv_objs_base=None,
         writer_tf=None,
-        loss_handler=None
+        loss_handler=None,
         ):
     renderer, camera_distance, elevation, azimuth = renderers.get_renderer(args.image_size, base_object=args.scene_name)
     renderer_high_res, _, _, _ = renderers.get_renderer(HIGH_RES, base_object=args.scene_name)
@@ -488,6 +489,7 @@ def main():
         adv_objs[k] = adv_obj
         adv_objs_base[k] = adv_obj_base
 
+        # INITIALIZATION OF PARAMETERS IS IMPORTANT
         for param_name, v in adv_obj.init_parameters(args, k).items():
             parameters['{}{}'.format(param_name, k)] = v
 
