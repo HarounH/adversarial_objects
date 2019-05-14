@@ -117,11 +117,16 @@ def get_args():
     parser.add_argument("-el_max", "--max_training_elevation_delta", default=5, type=int, help="")
     parser.add_argument("-el_val_min", "--min_validation_elevation_delta", default=0, type=int, help="")
     parser.add_argument("-el_val_max", "--max_validation_elevation_delta", default=50, type=int, help="")
+    parser.add_argument('-la_min', '--light_intensity_ambient_min', default=0.4)
+    parser.add_argument('-la_max', '--light_intensity_ambient_max', default=0.6)
+    parser.add_argument('-ld_min', '--light_intensity_directional_min', default=0.4)
+    parser.add_argument('-ld_max', '--light_intensity_directional_max', default=0.6)
 
+    parser.add_argument('-naz', '--num_azimuth', default=-1, type=int, help='If >0, it is the number of different azimuth values to use for training')
 
     parser.add_argument("-iter", "--max_iterations", type=int, default=100, help="Number of iterations to attack for.")
     parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at which to do steps.")
-    parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=1e-5, help='Weight decay')  # noqa
+    parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=0, help='Weight decay')  # noqa
     parser.add_argument("-b", "--bs", dest="batch_size", default=4, type=int, help="Batch size")
 
     # Output
@@ -255,6 +260,20 @@ def test(
                     adv_vft[1][0],
                     adv_vft[2][0]
                 )
+
+            if (args.light_intensity_ambient_min != args.light_intensity_ambient_max) or (args.light_intensity_directional_min != args.light_intensity_directional_max):
+                renderer = nr.Renderer(
+                    camera_mode=renderers.DEFAULT_CAMERA_MODE,
+                    image_size=args.image_size,
+                    light_intensity_ambient=np.random.uniform(args.light_light_intensity_ambient_min, args.light_light_intensity_ambient_max),
+                    light_intensity_directional=np.random.uniform(args.light_light_intensity_directional_min, args.light_light_intensity_directional_max),
+                )
+                renderer_high_res = nr.Renderer(
+                    camera_mode=renderers.DEFAULT_CAMERA_MODE,
+                    image_size=HIGH_RES,
+                    light_intensity_ambient=np.random.uniform(args.light_light_intensity_ambient_min, args.light_light_intensity_ambient_max),
+                    light_intensity_directional=np.random.uniform(args.light_light_intensity_directional_min, args.light_light_intensity_directional_max),
+                )
             renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
             renderer_high_res.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
             bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
@@ -382,19 +401,43 @@ def train(
             *([[obj_vft[i]] + [adv_vft[i] for adv_vft in adv_vfts] for i in range(3)])
         )
 
+        # Add ability to sample from set of azimuths.
         if batch_size > 1:
             rot_matrices = []
             for idx in range(batch_size):  # batch_size=1 works really.
-                angle = np.random.uniform(-args.training_range, args.training_range)
+                if args.num_azimuth > 0:
+                    angles = np.linspace(-args.training_range, args.training_range, args.num_azimuth)
+                    angle_idx = np.random.randint(0, args.num_azimuth - 1)
+                    angle = angles[angle_idx]
+                else:
+                    angle = np.random.uniform(-args.training_range, args.training_range)
                 rot_matrices.append(utils.create_rotation_y(angle))
             rot_matrices = torch.cat(rot_matrices).cuda()
             vft = wavefront.prepare_y_rotated_batch(vft, batch_size, rot_matrices)
             delta_azimuth = 0.0
         else:
             # projection, parameters
-            delta_azimuth = np.random.uniform(-args.max_training_azimuth_deviation, args.max_training_azimuth_deviation)
+            if args.num_azimuth > 0:
+                angles = np.linspace(-args.max_training_azimuth_deviation, args.max_training_azimuth_deviation, args.num_azimuth)
+                angle_idx = np.random.randint(0, args.num_azimuth - 1)
+                angle = angles[angle_idx]
+            else:
+                delta_azimuth = np.random.uniform(-args.max_training_azimuth_deviation, args.max_training_azimuth_deviation)
 
-        delta_elevation = np.random.uniform(args.min_training_elevation_delta, args.max_training_elevation_delta)
+        if args.num_azimuth > 0:
+            delta_elevation = 0
+        else:
+            delta_elevation = np.random.uniform(args.min_training_elevation_delta, args.max_training_elevation_delta)
+
+        # Training light intensity.
+        if (args.num_azimuth == -1) and ((args.light_intensity_ambient_min != args.light_intensity_ambient_max) or (args.light_intensity_directional_min != args.light_intensity_directional_max)):
+            renderer = nr.Renderer(
+                camera_mode=renderers.DEFAULT_CAMERA_MODE,
+                image_size=args.image_size,
+                light_intensity_ambient=np.random.uniform(args.light_light_intensity_ambient_min, args.light_light_intensity_ambient_max),
+                light_intensity_directional=np.random.uniform(args.light_light_intensity_directional_min, args.light_light_intensity_directional_max),
+            )
+
         renderer.eye = nr.get_points_from_angles(
             camera_distance,
             elevation + delta_elevation,
@@ -455,6 +498,15 @@ def train(
             utils.save_torch_image(
                 os.path.join(args.output_dir, 'training_iter{}.png'.format(i)), image[0])
             bg_img_hq = bg_big.render_image(center_crop=center_crops[args.scene_name], batch_size=batch_size)
+
+            if (args.num_azimuth == -1) and ((args.light_intensity_ambient_min != args.light_intensity_ambient_max) or (args.light_intensity_directional_min != args.light_intensity_directional_max)):
+                renderer_high_res = nr.Renderer(
+                    camera_mode=renderers.DEFAULT_CAMERA_MODE,
+                    image_size=HIGH_RES,
+                    light_intensity_ambient=np.random.uniform(args.light_light_intensity_ambient_min, args.light_light_intensity_ambient_max),
+                    light_intensity_directional=np.random.uniform(args.light_light_intensity_directional_min, args.light_light_intensity_directional_max),
+                )
+
             image_hq = renderer_high_res(*vft)  # [bs, 3, is, is]
             image_hq = combiner.combine_images_in_order([bg_img_hq, image_hq], image_hq.shape)
             utils.save_torch_image(
@@ -490,7 +542,7 @@ def main():
         adv_objs_base[k] = adv_obj_base
 
         # INITIALIZATION OF PARAMETERS IS IMPORTANT
-        for param_name, v in adv_obj.init_parameters(args, k).items():
+        for param_name, v in adv_obj.init_parameters(args, k, base_object).items():
             parameters['{}{}'.format(param_name, k)] = v
 
     writer_tf = SummaryWriter(log_dir=args.tensorboard_dir)

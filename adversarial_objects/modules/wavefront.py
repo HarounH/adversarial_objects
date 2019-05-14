@@ -78,7 +78,7 @@ class Object(nn.Module):
         textures = self.textures
         return [vertices.cuda(), faces.cuda(), textures.cuda()]
 
-    def init_parameters(self, args, k):
+    def init_parameters(self, args, k, base_object):
         assert (self.adv_ver or self.adv_tex), "init_parameters was called on non-adversarial object"
         parameters = {}
         if args.adv_ver:
@@ -95,7 +95,7 @@ class Object(nn.Module):
                     ], dtype=torch.float, device='cuda')
             elif args.scene_name == 'stopsign':
                 translation_param = (
-                    torch.tensor([0,0.02,0.02], device="cuda") * torch.randn((3, ), device='cuda')
+                    torch.tensor([0,0.02,0.02], device='cuda') * torch.randn((3, ), device='cuda')
                     + torch.tensor([
                         0.02,
                         5 * args.scale0*np.cos(2 * np.pi * k / args.nobj),
@@ -103,8 +103,18 @@ class Object(nn.Module):
                     ], dtype=torch.float, device='cuda')
                 )
             elif args.scene_name.startswith('shapenet'):
-                raise NotImplementedError('Implement initialization \
-                                          of shapenet models')
+                translation_param_info = base_object.info['translation_param_init']
+                translation_param = (
+                    torch.tensor(translation_param_info['group'], device='cuda')
+                    + (
+                        torch.tensor(translation_param_info['random_multiplier'], device='cuda')
+                        * torch.randn((3, ), device='cuda'))
+                    + torch.tensor([
+                        0.0,
+                        translation_param_info['circle_radius'][1] * np.cos(2 * np.pi * k / args.nobj),
+                        translation_param_info['circle_radius'][2] * np.sin(2 * np.pi * k / args.nobj)
+                    ], dtype=torch.float, device='cuda')
+                )
             else:
                 raise NotImplementedError(
                     'Implement initialization of parameters in \
@@ -115,13 +125,20 @@ class Object(nn.Module):
             parameters['translation'] = translation_param
 
         if args.rotation_clamp > 0:
-            rotation_param = torch.randn((3,), requires_grad=True, device='cuda')
+            if args.scene_name.startswith('shapenet'):
+                rotation_param_info = base_object.info['rotation_param_init']
+                rotation_param_info = torch.tensor(rotation_param_info['absolute'], device='cuda', requires_grad=True)
+            else:
+                rotation_param = 0
+            rotation_param += torch.randn((3,), requires_grad=True, device='cuda')
             parameters['rotation'] = rotation_param
         else:
             parameters['rotation'] = torch.zeros((3,), requires_grad=False, device='cuda')
 
         if args.scaling_clamp > 0:
             scaling_param = args.scale0 * (torch.ones((3,), requires_grad=False, device='cuda'))
+            if args.scene_name.startswith('shapenet'):
+                scaling_param *= torch.tensor(base_object.info['scaling_param_init']['multiplier'])
             scaling_param.requires_grad_(True)
             parameters['scaling'] = scaling_param
         else:
@@ -138,7 +155,7 @@ def prep_stop_sign(stop_sign):
 def prep_mug(base_object):
     base_object.vertices -= base_object.vertices.mean(1)
     base_object.vertices /= 6.0 #0.5 #2.0 #
-    base_object.vertices += torch.tensor([-0.5,0.0,-0.5], device="cuda")
+    base_object.vertices += torch.tensor([-0.5, 0.0, -0.5], device='cuda')
     return base_object
 
 
@@ -146,6 +163,7 @@ objects_dict = {
     'stopsign': ['adversarial_objects/data/custom_stop_sign.obj', prep_stop_sign],
     'coffeemug': ['adversarial_objects/data/coffeemug.obj', prep_mug],
     'cube': ['adversarial_objects/data/evil_cube_1.obj', None],
+    'slab': ['adversarial_objects/data/evil_slab_1.obj', prep_slab],
     'small_icosphere': ['adversarial_objects/data/obj2.obj', None],
     'big_icosphere': ['adversarial_objects/data/obj3.obj', None],
     'cylinder': ['adversarial_objects/data/obj4.obj', None],

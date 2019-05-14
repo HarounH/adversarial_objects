@@ -17,8 +17,8 @@ rendering_parameters = {
     },
 }
 
-
-def get_renderer(image_size, camera_mode='look_at', base_object=None):
+DEFAULT_CAMERA_MODE = 'look_at'
+def get_renderer(image_size, camera_mode=DEFAULT_CAMERA_MODE, base_object=None):
     renderer = nr.Renderer(camera_mode=camera_mode, image_size=image_size)
     if base_object is not None:
         d = rendering_parameters[base_object]

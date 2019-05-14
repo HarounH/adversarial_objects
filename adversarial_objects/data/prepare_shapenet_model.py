@@ -73,7 +73,7 @@ for synset_id in synset_ids:
             'circle_radius': [0.0, 0.9, 0.9],
         }
         output_i['scaling_param_init'] = {
-            'multiplier': [0.15, 0.15, 0.15],
+            'multiplier': [1.0, 1.0, 1.0],
         }
         output_i['rotation_param_init'] = {
             'absolute': [0.0, 0.0, 0.0],
