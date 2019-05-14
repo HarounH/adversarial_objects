@@ -7,6 +7,14 @@ from torchvision import transforms
 import neural_renderer as nr
 
 
+def parse_shapenet_code(name):
+    # Returns T/F, ImagenetClass/F, model_idx/F
+    if name.startswith('shapenet.'):
+        return True, name.split('.')[1], name.split('.')[2]
+    else:
+        return False, None, None
+
+
 class Object(nn.Module):
     def __init__(self, obj_filename, texture_size=2, adv_ver=False, adv_tex=False, rng_tex=False):
         super(Object, self).__init__()
@@ -87,7 +95,7 @@ class Object(nn.Module):
                     ], dtype=torch.float, device='cuda')
             elif args.scene_name == 'stopsign':
                 translation_param = (
-                    torch.tensor([0,0.02,0.02], device="cuda") * torch.randn((3,), device='cuda')
+                    torch.tensor([0,0.02,0.02], device="cuda") * torch.randn((3, ), device='cuda')
                     + torch.tensor([
                         0.02,
                         5 * args.scale0*np.cos(2 * np.pi * k / args.nobj),
@@ -146,17 +154,24 @@ objects_dict = {
 
 
 def load_obj(obj_name, prep_fn_=None, *args, **kwargs):
-    path, prep_fn = tuple(objects_dict[obj_name])
+    # Shapenet objects
+    is_shapenet, class_name, model_idx = parse_shapenet_code(obj_name)
+    if is_shapenet:
+        raise NotImplementedError()
+    else:
+        # Other objects
+        path, prep_fn = tuple(objects_dict[obj_name])
 
-    if prep_fn_ is not None:
-        prep_fn = prep_fn_
+        if prep_fn_ is not None:
+            prep_fn = prep_fn_
 
-    if prep_fn is None:
-        prep_fn = lambda x: x
+        if prep_fn is None:
+            prep_fn = lambda x: x
 
-    with torch.no_grad():
-        obj = Object(path, *args, **kwargs)
-    return prep_fn(obj)
+        with torch.no_grad():
+            obj = Object(path, *args, **kwargs)
+            obj.name = obj_name
+        return prep_fn(obj)
 
 
 def create_affine_transform(scaling, translation, rotation, adv_ver):
