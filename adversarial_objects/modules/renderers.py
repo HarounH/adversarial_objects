@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import neural_renderer as nr
-
+import json
 
 rendering_parameters = {
     'coffeemug': {
@@ -16,6 +16,11 @@ rendering_parameters = {
         'azimuth': 90.0,
     },
 }
+
+with open('prepared_shapenet_info.json','r') as json_file:  
+    data = json.load(json_file)
+    for k,v in data.items():
+        rendering_parameters[k] = v['rendering']
 
 DEFAULT_CAMERA_MODE = 'look_at'
 def get_renderer(image_size, camera_mode=DEFAULT_CAMERA_MODE, base_object=None):

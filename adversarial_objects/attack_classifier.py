@@ -38,7 +38,7 @@ from modules import (
 import utils
 from victim_0.network import get_victim
 import pretrainedmodels
-
+import json
 PHOTO_EVERY = 100
 EVAL_EVERY = 1
 HIGH_RES = 400
@@ -47,6 +47,13 @@ center_crops = {
     'coffeemug': False,
     'stopsign': True,
 }
+
+with open('prepared_shapenet_info.json','r') as json_file:  
+    data = json.load(json_file)
+    # TODO: What do we do here?
+    print("TODO: Centercrop for shapenet??")
+    for k,v in data.items():
+        center_crops[k] = True
 
 
 def get_imagenet_constructor(name):
@@ -144,14 +151,16 @@ def get_args():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
-    os.makedirs(args.base_output, exist_ok=True)
+    if not os.path.exists(args.base_output):
+        os.makedirs(args.base_output)
     if len(args.run_code) == 0:
         # Generate a run code by counting number of directories in oututs
         run_count = len(os.listdir(args.base_output))
         args.run_code = 'run{}'.format(run_count)
     if args.output_dir == '':
         args.output_dir = os.path.join(args.base_output, args.run_code)
-    os.makedirs(args.output_dir, exist_ok=True)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
     args.tensorboard_dir = os.path.join(args.output_dir, args.tensorboard_dir)
     print("Using run_code: {}".format(args.run_code))
     print('Output dir: {}'.format(args.output_dir))
@@ -265,14 +274,14 @@ def test(
                 renderer = nr.Renderer(
                     camera_mode=renderers.DEFAULT_CAMERA_MODE,
                     image_size=args.image_size,
-                    light_intensity_ambient=np.random.uniform(args.light_light_intensity_ambient_min, args.light_light_intensity_ambient_max),
-                    light_intensity_directional=np.random.uniform(args.light_light_intensity_directional_min, args.light_light_intensity_directional_max),
+                    light_intensity_ambient=np.random.uniform(args.light_intensity_ambient_min, args.light_intensity_ambient_max),
+                    light_intensity_directional=np.random.uniform(args.light_intensity_directional_min, args.light_intensity_directional_max),
                 )
                 renderer_high_res = nr.Renderer(
                     camera_mode=renderers.DEFAULT_CAMERA_MODE,
                     image_size=HIGH_RES,
-                    light_intensity_ambient=np.random.uniform(args.light_light_intensity_ambient_min, args.light_light_intensity_ambient_max),
-                    light_intensity_directional=np.random.uniform(args.light_light_intensity_directional_min, args.light_light_intensity_directional_max),
+                    light_intensity_ambient=np.random.uniform(args.light_intensity_ambient_min, args.light_intensity_ambient_max),
+                    light_intensity_directional=np.random.uniform(args.light_intensity_directional_min, args.light_intensity_directional_max),
                 )
             renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
             renderer_high_res.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
@@ -434,8 +443,8 @@ def train(
             renderer = nr.Renderer(
                 camera_mode=renderers.DEFAULT_CAMERA_MODE,
                 image_size=args.image_size,
-                light_intensity_ambient=np.random.uniform(args.light_light_intensity_ambient_min, args.light_light_intensity_ambient_max),
-                light_intensity_directional=np.random.uniform(args.light_light_intensity_directional_min, args.light_light_intensity_directional_max),
+                light_intensity_ambient=np.random.uniform(args.light_intensity_ambient_min, args.light_intensity_ambient_max),
+                light_intensity_directional=np.random.uniform(args.light_intensity_directional_min, args.light_intensity_directional_max),
             )
 
         renderer.eye = nr.get_points_from_angles(
@@ -503,8 +512,8 @@ def train(
                 renderer_high_res = nr.Renderer(
                     camera_mode=renderers.DEFAULT_CAMERA_MODE,
                     image_size=HIGH_RES,
-                    light_intensity_ambient=np.random.uniform(args.light_light_intensity_ambient_min, args.light_light_intensity_ambient_max),
-                    light_intensity_directional=np.random.uniform(args.light_light_intensity_directional_min, args.light_light_intensity_directional_max),
+                    light_intensity_ambient=np.random.uniform(args.light_intensity_ambient_min, args.light_intensity_ambient_max),
+                    light_intensity_directional=np.random.uniform(args.light_intensity_directional_min, args.light_intensity_directional_max),
                 )
 
             image_hq = renderer_high_res(*vft)  # [bs, 3, is, is]

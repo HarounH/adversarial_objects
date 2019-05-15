@@ -5,8 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 import neural_renderer as nr
-
-
+import json
+import pdb 
 def parse_shapenet_code(name):
     # Returns T/F, ImagenetClass/F, model_idx/F
     if name.startswith('shapenet.'):
@@ -58,6 +58,7 @@ class Object(nn.Module):
 
         self.vertices = vertices[None, :, :].cuda()
         self.faces = faces[None, :, :].cuda()
+        self.info = {}
         self.cuda()
 
     def render_parameters(self, affine_transform=None):
@@ -158,38 +159,53 @@ def prep_mug(base_object):
     base_object.vertices += torch.tensor([-0.5, 0.0, -0.5], device='cuda')
     return base_object
 
+def prep_shapenet(base_object, scale = 1, translation = [0,0,0], info = {}):
+    base_object.vertices -= torch.tensor(translation, device='cuda')
+    base_object.vertices /= scale
+    base_object.info = info
+    return base_object
 
 objects_dict = {
     'stopsign': ['adversarial_objects/data/custom_stop_sign.obj', prep_stop_sign],
     'coffeemug': ['adversarial_objects/data/coffeemug.obj', prep_mug],
     'cube': ['adversarial_objects/data/evil_cube_1.obj', None],
-    'slab': ['adversarial_objects/data/evil_slab_1.obj', prep_slab],
+    'slab': ['adversarial_objects/data/evil_slab_1.obj', None],
     'small_icosphere': ['adversarial_objects/data/obj2.obj', None],
     'big_icosphere': ['adversarial_objects/data/obj3.obj', None],
     'cylinder': ['adversarial_objects/data/obj4.obj', None],
     'divcube': ['adversarial_objects/data/subdivided_cube.obj', None],
 }
 
+with open('prepared_shapenet_info.json','r') as json_file:  
+    data = json.load(json_file)
+    for k,v in data.items():
+        objects_dict[k] = [v['wavefront_file'],
+        lambda x: prep_shapenet(x,
+            scale=v['base_object_init']['scale'],
+            translation=v['base_object_init']['translation'],
+            info={'rotation_param_init':v['rotation_param_init'],
+                'scaling_param_init':v['scaling_param_init'],
+                'translation_param_init':v['translation_param_init']
+                }
+            )
+        ]
+
 
 def load_obj(obj_name, prep_fn_=None, *args, **kwargs):
     # Shapenet objects
     is_shapenet, class_name, model_idx = parse_shapenet_code(obj_name)
-    if is_shapenet:
-        raise NotImplementedError()
-    else:
-        # Other objects
-        path, prep_fn = tuple(objects_dict[obj_name])
+    path, prep_fn = tuple(objects_dict[obj_name])
 
-        if prep_fn_ is not None:
-            prep_fn = prep_fn_
+    if prep_fn_ is not None:
+        prep_fn = prep_fn_
 
-        if prep_fn is None:
-            prep_fn = lambda x: x
+    if prep_fn is None:
+        prep_fn = lambda x: x
 
-        with torch.no_grad():
-            obj = Object(path, *args, **kwargs)
-            obj.name = obj_name
-        return prep_fn(obj)
+    with torch.no_grad():
+        obj = Object(path, *args, **kwargs)
+        obj.name = obj_name
+    return prep_fn(obj)
 
 
 def create_affine_transform(scaling, translation, rotation, adv_ver):
