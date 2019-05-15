@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torchvision import transforms
 import neural_renderer as nr
 import json
-import pdb 
+import pdb
 def parse_shapenet_code(name):
     # Returns T/F, ImagenetClass/F, model_idx/F
     if name.startswith('shapenet.'):
@@ -16,7 +16,7 @@ def parse_shapenet_code(name):
 
 
 class Object(nn.Module):
-    def __init__(self, obj_filename, texture_size=2, adv_ver=False, adv_tex=False, rng_tex=False):
+    def __init__(self, obj_filename, texture_size=2, adv_ver=False, adv_tex=False, rng_tex=False, normalization=False):
         super(Object, self).__init__()
         assert torch.cuda.is_available()
         self.adv_ver = adv_ver
@@ -28,7 +28,7 @@ class Object(nn.Module):
             texture_size=texture_size,
             texture_wrapping='REPEAT',
             use_bilinear=True,
-            normalization=False,
+            normalization=normalization,
         )
         if rng_tex:
             textures = 0.1 + 0.8 * torch.rand_like(textures, device='cuda')
@@ -159,11 +159,16 @@ def prep_mug(base_object):
     base_object.vertices += torch.tensor([-0.5, 0.0, -0.5], device='cuda')
     return base_object
 
-def prep_shapenet(base_object, scale = 1, translation = [0,0,0], info = {}):
-    base_object.vertices -= torch.tensor(translation, device='cuda')
-    base_object.vertices /= scale
-    base_object.info = info
-    return base_object
+
+def prep_shapenet_maker(scale=1, translation=[0, 0, 0], info={}):
+    def prep_shapenet(base_object):
+        print('prep shapenet with scale={}'.format(scale))
+        base_object.vertices -= torch.tensor(translation, device='cuda')
+        base_object.vertices /= scale
+        base_object.info = info
+        return base_object
+    return prep_shapenet
+
 
 objects_dict = {
     'stopsign': ['adversarial_objects/data/custom_stop_sign.obj', prep_stop_sign],
@@ -176,19 +181,29 @@ objects_dict = {
     'divcube': ['adversarial_objects/data/subdivided_cube.obj', None],
 }
 
-with open('prepared_shapenet_info.json','r') as json_file:  
+with open('prepared_shapenet_info.json','r') as json_file:
     data = json.load(json_file)
-    for k,v in data.items():
-        objects_dict[k] = [v['wavefront_file'],
-        lambda x: prep_shapenet(x,
-            scale=v['base_object_init']['scale'],
-            translation=v['base_object_init']['translation'],
-            info={'rotation_param_init':v['rotation_param_init'],
-                'scaling_param_init':v['scaling_param_init'],
-                'translation_param_init':v['translation_param_init']
+    for k, v in data.items():
+        objects_dict[k] = [
+            v['wavefront_file'],
+            prep_shapenet_maker(
+                scale=v['base_object_init']['scale'],
+                translation=v['base_object_init']['translation'],
+                info={
+                    'rotation_param_init': v['rotation_param_init'],
+                    'scaling_param_init': v['scaling_param_init'],
+                    'translation_param_init': v['translation_param_init']
                 }
             )
         ]
+        # lambda x: prep_shapenet(x,
+        #     scale=v['base_object_init']['scale'],
+        #     translation=v['base_object_init']['translation'],
+        #     info={'rotation_param_init':v['rotation_param_init'],
+        #         'scaling_param_init':v['scaling_param_init'],
+        #         'translation_param_init':v['translation_param_init']
+        #         }
+        #     )
 
 
 def load_obj(obj_name, prep_fn_=None, *args, **kwargs):
@@ -203,7 +218,7 @@ def load_obj(obj_name, prep_fn_=None, *args, **kwargs):
         prep_fn = lambda x: x
 
     with torch.no_grad():
-        obj = Object(path, *args, **kwargs)
+        obj = Object(path, normalization=is_shapenet, *args, **kwargs)
         obj.name = obj_name
     return prep_fn(obj)
 

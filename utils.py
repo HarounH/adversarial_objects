@@ -19,7 +19,15 @@ def save_torch_image(path, tensor):
     ''' One tensor in (RGB, H, W) format.
     '''
     assert (len(tensor.shape) == 3)
-    imsave(path, tensor.permute(1, 2, 0).detach().cpu().numpy())
+    # import pdb; pdb.set_trace()
+    data = tensor.permute(1, 2, 0).detach().cpu().numpy()
+    data[data > 1] = 1.0
+    data[data < -1] = -1.0
+    # data -= data.min()
+    # data /= data.max()
+    # data *= 2
+    # data -= 1
+    imsave(path, data)
 
 
 def save_torch_gif(path, tensors):
