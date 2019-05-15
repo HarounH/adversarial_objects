@@ -17,14 +17,18 @@ rendering_parameters = {
     },
 }
 
-with open('prepared_shapenet_info.json','r') as json_file:  
+with open('prepared_shapenet_info.json','r') as json_file:
     data = json.load(json_file)
     for k,v in data.items():
         rendering_parameters[k] = v['rendering']
 
 DEFAULT_CAMERA_MODE = 'look_at'
+
+
 def get_renderer(image_size, camera_mode=DEFAULT_CAMERA_MODE, base_object=None):
-    renderer = nr.Renderer(camera_mode=camera_mode, image_size=image_size)
+    renderer = nr.Renderer(
+        camera_mode=camera_mode,
+        image_size=image_size)  # , light_intensity_ambient=0.8, light_intensity_directional=0.8)
     if base_object is not None:
         d = rendering_parameters[base_object]
         camera_distance, elevation, azimuth = d['camera_distance'], d['elevation'], d['azimuth']

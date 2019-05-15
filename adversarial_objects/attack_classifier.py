@@ -48,7 +48,7 @@ center_crops = {
     'stopsign': True,
 }
 
-with open('prepared_shapenet_info.json','r') as json_file:  
+with open('prepared_shapenet_info.json','r') as json_file:
     data = json.load(json_file)
     # TODO: What do we do here?
     print("TODO: Centercrop for shapenet??")
@@ -218,9 +218,10 @@ def test(
 
     obj_vft = base_object.render_parameters()
     with torch.no_grad():
-        bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
         base_image = renderer(*(obj_vft))  # 1, 3, is, is
-        base_image = combiner.combine_images_in_order([bg_img, base_image], bg_img.shape)
+        if bg:
+            bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
+            base_image = combiner.combine_images_in_order([bg_img, base_image], bg_img.shape)
 
         ytrue = (F.softmax(model(base_image),dim=1))
         ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
@@ -229,11 +230,12 @@ def test(
     loop = range(90 - 2 * args.validation_range,
                  90 + 2 * args.validation_range,
                  2)
+
+    NUM_TEST_ELEVATIONS = 10  # (args.max_validation_elevation_delta - args.min_validation_elevation_delta) // 2
     elevation_loop = np.linspace(
         (elevation + args.min_validation_elevation_delta),
         elevation + args.max_validation_elevation_delta,
-        num=((args.max_validation_elevation_delta
-              - args.min_validation_elevation_delta) // 2))
+        num=NUM_TEST_ELEVATIONS)
 
     correct_raw = {i: 0 for i in TOP_COUNTS}
     correct_adv = {i: 0 for i in TOP_COUNTS}
@@ -285,12 +287,18 @@ def test(
                 )
             renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
             renderer_high_res.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth)
-            bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
-            bg_img_big = bg_big.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
 
-            raw_image = combiner.combine_images_in_order([bg_img, renderer(*obj_vft)], bg_img.shape)
-            adv_image = combiner.combine_images_in_order([bg_img, renderer(*vft)], bg_img.shape)
-            adv_image_big = combiner.combine_images_in_order([bg_img_big, renderer_high_res(*vft)], bg_img_big.shape)
+            raw_image = renderer(*obj_vft)
+            adv_image = renderer(*vft)
+            adv_image_big = renderer_high_res(*vft)
+
+            if bg:
+                bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
+                raw_image = combiner.combine_images_in_order([bg_img, renderer(*obj_vft)], bg_img.shape)
+                adv_image = combiner.combine_images_in_order([bg_img, renderer(*vft)], bg_img.shape)
+            if bg_big:
+                bg_img_big = bg_big.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
+                adv_image_big = combiner.combine_images_in_order([bg_img_big, renderer_high_res(*vft)], bg_img_big.shape)
 
             renderer.eye = nr.get_points_from_angles(camera_distance, elevation, azimuth * 180.0 / args.validation_range)
             cube_image = renderer(*adv_vft)
@@ -374,9 +382,10 @@ def train(
 
     obj_vft = base_object.render_parameters()
     with torch.no_grad():
-        bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
         base_image = renderer(*(obj_vft))  # 1, 3, is, is
-        base_image = combiner.combine_images_in_order([bg_img, base_image], bg_img.shape)
+        if bg:
+            bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
+            base_image = combiner.combine_images_in_order([bg_img, base_image], bg_img.shape)
         utils.save_torch_image(os.path.join(args.output_dir, 'original_image.png'), base_image[0])
 
         ytrue = (F.softmax(model(base_image),dim=1))
@@ -454,8 +463,9 @@ def train(
         )
 
         image = renderer(*vft)  # [bs, 3, is, is]
-        bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=batch_size)
-        image = combiner.combine_images_in_order([bg_img, image], image.shape)
+        if bg:
+            bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=batch_size)
+            image = combiner.combine_images_in_order([bg_img, image], image.shape)
 
         pred_prob_y = F.softmax(model(image), dim=1)
 
@@ -506,7 +516,7 @@ def train(
         if i % PHOTO_EVERY == 0:
             utils.save_torch_image(
                 os.path.join(args.output_dir, 'training_iter{}.png'.format(i)), image[0])
-            bg_img_hq = bg_big.render_image(center_crop=center_crops[args.scene_name], batch_size=batch_size)
+
 
             if (args.num_azimuth == -1) and ((args.light_intensity_ambient_min != args.light_intensity_ambient_max) or (args.light_intensity_directional_min != args.light_intensity_directional_max)):
                 renderer_high_res = nr.Renderer(
@@ -517,6 +527,8 @@ def train(
                 )
 
             image_hq = renderer_high_res(*vft)  # [bs, 3, is, is]
+            if bg_big:
+                bg_img_hq = bg_big.render_image(center_crop=center_crops[args.scene_name], batch_size=batch_size)
             image_hq = combiner.combine_images_in_order([bg_img_hq, image_hq], image_hq.shape)
             utils.save_torch_image(
                 os.path.join(args.output_dir, 'training_iter{}_hq.png'.format(i)), image_hq[0])
@@ -528,8 +540,11 @@ def main():
     model, label_names, img_size = get_classifier(args.classifier, args.classifier_path, args.labels_path)
     args.image_size = img_size
     # Instantiate objects
-    bg = background.Background(os.path.join(args.data_dir, args.background), img_size)
-    bg_big = background.Background(os.path.join(args.data_dir, args.background), HIGH_RES)
+    if args.background != '':
+        bg = background.Background(os.path.join(args.data_dir, args.background), img_size)
+        bg_big = background.Background(os.path.join(args.data_dir, args.background), HIGH_RES)
+    else:
+        bg = bg_big = None
     base_object = wavefront.load_obj(args.scene_name, texture_size=args.ts)
 
     # Initialize objects
