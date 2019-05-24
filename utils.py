@@ -6,6 +6,12 @@ import imageio
 import torch
 
 
+def defaultdict_to_dict(d):
+    if isinstance(d, defaultdict):
+        d = {k: defaultdict_to_dict(v) for k, v in d.items()}
+    return d
+
+
 def create_rotation_y(angle):
     rotation_y = torch.eye(4)
     rotation_y[0, 0] = rotation_y[2, 2] = torch.cos(torch.tensor(angle*np.pi/180))

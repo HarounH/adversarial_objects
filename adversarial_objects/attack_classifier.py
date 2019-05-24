@@ -95,7 +95,7 @@ def get_args():
     parser.add_argument('classifier', choices=list(classifiers.keys()), help='Which classifier to attack')
     parser.add_argument('-m', '--classifier_path', default='', help='Specify to override defaults')
     parser.add_argument('-l', '--labels_path', default='', help='Specify to override defaults')
-    parser.add_argument("-bg", "--background", dest="background", type=str, default="highway2.jpg", help="Path to background file (image)")
+    parser.add_argument("-bg", "--background", dest="background", type=str, default="", help="Path to background file (image)")
 
     # Attacker specification
     parser.add_argument('-s', '--scene_name', default='stopsign', choices=list(wavefront.objects_dict.keys()), help='name of object to use to attack')
@@ -132,7 +132,7 @@ def get_args():
     parser.add_argument('-naz', '--num_azimuth', default=-1, type=int, help='If >0, it is the number of different azimuth values to use for training')
 
     parser.add_argument("-iter", "--max_iterations", type=int, default=100, help="Number of iterations to attack for.")
-    parser.add_argument("--lr", dest="lr", default=0.001, type=float, help="Rate at which to do steps.")
+    parser.add_argument("--lr", dest="lr", default=0.0005, type=float, help="Rate at which to do steps.")
     parser.add_argument("--weight_decay", dest="weight_decay", type=float, metavar='<float>', default=0, help='Weight decay')  # noqa
     parser.add_argument("-b", "--bs", dest="batch_size", default=4, type=int, help="Batch size")
 
@@ -143,7 +143,7 @@ def get_args():
     parser.add_argument("-r", "--run", dest='run_code', type=str, default='', help='Name this run. It will be a folder in the output directory')  # noqa
     parser.add_argument("--tensorboard_dir", dest="tensorboard_dir", type=str, default="tensorboard", help="Subdirectory to save logs using tensorboard")  # noqa
     parser.add_argument('-o', '--output_dir', default='', help='Specify to override run code mechanism')
-
+    parser.add_argument('--no_gif', action='store_true', help='If provided, does not create a GIF during testing')
     args = parser.parse_args()
 
     args.cuda = True
@@ -227,11 +227,11 @@ def test(
         ytrue_label = int(torch.argmax(ytrue).detach().cpu().numpy())
         ytopk = torch.topk(ytrue, 5)[1].detach().cpu().numpy()
 
-    loop = range(90 - 2 * args.validation_range,
-                 90 + 2 * args.validation_range,
-                 2)
+    loop = range(90 - args.validation_range,
+                 90 + args.validation_range,
+                 4)
 
-    NUM_TEST_ELEVATIONS = 10  # (args.max_validation_elevation_delta - args.min_validation_elevation_delta) // 2
+    NUM_TEST_ELEVATIONS = 5  # (args.max_validation_elevation_delta - args.min_validation_elevation_delta) // 2
     elevation_loop = np.linspace(
         (elevation + args.min_validation_elevation_delta),
         elevation + args.max_validation_elevation_delta,
@@ -290,7 +290,9 @@ def test(
 
             raw_image = renderer(*obj_vft)
             adv_image = renderer(*vft)
-            adv_image_big = renderer_high_res(*vft)
+
+            if not args.no_gif:
+                adv_image_big = renderer_high_res(*vft)
 
             if bg:
                 bg_img = bg.render_image(center_crop=center_crops[args.scene_name], batch_size=1)
@@ -307,9 +309,10 @@ def test(
             y_raw = model(raw_image)
 
             # These 3 will be passed to a writer
-            gif_tensors.append(adv_image)
-            gif_tensors_big.append(adv_image_big)
-            gif_tensors_adversary.append(cube_image)
+            if not args.no_gif:
+                gif_tensors.append(adv_image)
+                gif_tensors_big.append(adv_image_big)
+                gif_tensors_adversary.append(cube_image)
 
             for k in TOP_COUNTS:
                 y_adv_label = torch.topk(y_adv, k)[1].detach().cpu().numpy()
@@ -323,24 +326,27 @@ def test(
                     correct_target[k] += 1
 
         # Draw gifs
-        utils.save_torch_gif(
-            os.path.join(
-                args.output_dir,
-                '{}_and_{}{}_ele{}.gif'.format(args.scene_name, args.nobj, args.attacker_name, elevation)),
-            torch.cat(gif_tensors, dim=0))
-        utils.save_torch_gif(
-            os.path.join(
-                args.output_dir,
-                '{}_and_{}{}_ele{}_hq.gif'.format(args.scene_name, args.nobj, args.attacker_name, elevation)),
-            torch.cat(gif_tensors_big, dim=0))
-        utils.save_torch_gif(
-            os.path.join(
-                args.output_dir,
-                '{}{}_ele{}.gif'.format(args.nobj, args.attacker_name, elevation)),
-            torch.cat(gif_tensors_adversary, dim=0))
+        if not args.no_gif:
+            utils.save_torch_gif(
+                os.path.join(
+                    args.output_dir,
+                    '{}_and_{}{}_ele{}.gif'.format(args.scene_name, args.nobj, args.attacker_name, elevation)),
+                torch.cat(gif_tensors, dim=0))
+            utils.save_torch_gif(
+                os.path.join(
+                    args.output_dir,
+                    '{}_and_{}{}_ele{}_hq.gif'.format(args.scene_name, args.nobj, args.attacker_name, elevation)),
+                torch.cat(gif_tensors_big, dim=0))
+            utils.save_torch_gif(
+                os.path.join(
+                    args.output_dir,
+                    '{}{}_ele{}.gif'.format(args.nobj, args.attacker_name, elevation)),
+                torch.cat(gif_tensors_adversary, dim=0))
 
     # Report metrics
     for k in TOP_COUNTS:
+        if correct_raw[k] == 0:
+            continue
         print("########")
         print("TOP-{}".format(k))
         print("Raw accuracy:{}".format(correct_raw[k] / (len(elevation_loop) * len(loop))))
@@ -352,7 +358,7 @@ def test(
                 label_names[args.target_class],
                 correct_target[k],
                 correct_raw[k]))
-            loss_handler['targeted_attack'][top_counts].append(correct_target[k] / (0.0 + correct_raw[k]))
+            loss_handler['targeted_attack'][k].append(correct_target[k] / (0.0 + correct_raw[k]))
 
         loss_handler['raw_accuracy'][k].append((correct_raw[k] / (len(elevation_loop) * len(loop))))
         loss_handler['attack_accuracy'][k].append(((correct_raw[k] - correct_adv[k])/(0.0 + correct_raw[k])))
@@ -362,6 +368,7 @@ def test(
         loss_handler.log_epoch(writer_tf, k)
         print("########")
         print("########")
+    return loss_handler
 
 
 def train(
@@ -471,7 +478,7 @@ def train(
 
         loss = loss_fns.untargeted_loss_fn(pred_prob_y, ytrue_label)
         if args.target_class > -1:
-            loss += loss_fns.targeted_loss_fn(pred_prob_y, ytopk, target_class)
+            loss += loss_fns.targeted_loss_fn(pred_prob_y, ytopk, args.target_class)
 
         # Regularization terms
         adv_vfts_base = [adv_obj_base.render_parameters(
@@ -517,7 +524,6 @@ def train(
             utils.save_torch_image(
                 os.path.join(args.output_dir, 'training_iter{}.png'.format(i)), image[0])
 
-
             if (args.num_azimuth == -1) and ((args.light_intensity_ambient_min != args.light_intensity_ambient_max) or (args.light_intensity_directional_min != args.light_intensity_directional_max)):
                 renderer_high_res = nr.Renderer(
                     camera_mode=renderers.DEFAULT_CAMERA_MODE,
@@ -529,7 +535,7 @@ def train(
             image_hq = renderer_high_res(*vft)  # [bs, 3, is, is]
             if bg_big:
                 bg_img_hq = bg_big.render_image(center_crop=center_crops[args.scene_name], batch_size=batch_size)
-            image_hq = combiner.combine_images_in_order([bg_img_hq, image_hq], image_hq.shape)
+                image_hq = combiner.combine_images_in_order([bg_img_hq, image_hq], image_hq.shape)
             utils.save_torch_image(
                 os.path.join(args.output_dir, 'training_iter{}_hq.png'.format(i)), image_hq[0])
 
@@ -540,7 +546,7 @@ def main():
     model, label_names, img_size = get_classifier(args.classifier, args.classifier_path, args.labels_path)
     args.image_size = img_size
     # Instantiate objects
-    if args.background != '':
+    if len(args.background) != 0:
         bg = background.Background(os.path.join(args.data_dir, args.background), img_size)
         bg_big = background.Background(os.path.join(args.data_dir, args.background), HIGH_RES)
     else:
@@ -572,6 +578,7 @@ def main():
     writer_tf = SummaryWriter(log_dir=args.tensorboard_dir)
     loss_handler = utils.LossHandler()
 
+    tic = time()
     # Train
     train(
         args,
@@ -586,6 +593,8 @@ def main():
         writer_tf=writer_tf,
         loss_handler=loss_handler,
     )
+    training_time = time() - tic
+    tic = time()
     # Evaluate
     with torch.no_grad():
         test(
@@ -601,7 +610,11 @@ def main():
             writer_tf=writer_tf,
             loss_handler=loss_handler,
         )
-
+    testing_time = time() - tic
+    with open(os.path.join(args.output_dir, 'loss_handler.checkpoint'), 'wb') as f:
+        torch.save(utils.defaultdict_to_dict(loss_handler.logs), f)
+    print('Training time: {}s'.format(training_time))
+    print('Testing time: {}s'.format(testing_time))
 
 if __name__ == '__main__':
     main()
